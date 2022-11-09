@@ -3,30 +3,34 @@ package simpledb.storage;
 import simpledb.common.Type;
 
 import java.io.Serializable;
+import java.security.NoSuchAlgorithmException;
 import java.util.*;
+
+import javax.naming.directory.InitialDirContext;
 
 /**
  * TupleDesc describes the schema of a tuple.
  */
 public class TupleDesc implements Serializable {
-
     /**
      * A help class to facilitate organizing the information of each field
-     * */
+     */
     public static class TDItem implements Serializable {
 
         private static final long serialVersionUID = 1L;
 
         /**
          * The type of the field
-         * */
+         */
         public final Type fieldType;
-        
+
         /**
          * The name of the field
-         * */
+         */
         public final String fieldName;
 
+        // tuple's meta data (tuple description):
+        // | name0(type0) | name1(type1) | ... | namen(typen) |
         public TDItem(Type t, String n) {
             this.fieldName = n;
             this.fieldType = t;
@@ -37,14 +41,34 @@ public class TupleDesc implements Serializable {
         }
     }
 
+    private TDItem tdItems[];
+
     /**
      * @return
-     *        An iterator which iterates over all the field TDItems
-     *        that are included in this TupleDesc
-     * */
+     *         An iterator which iterates over all the field TDItems
+     *         that are included in this TupleDesc
+     */
+    private class TupleDescIterator implements Iterator<TDItem> {
+        private int nextPos = 0;
+
+        public TupleDescIterator(int n) {
+            nextPos = n;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return nextPos < tdItems.length;
+        }
+
+        @Override
+        public TDItem next() {
+            return tdItems[nextPos++];
+        }
+    }
+
     public Iterator<TDItem> iterator() {
         // some code goes here
-        return null;
+        return new TupleDescIterator(0);
     }
 
     private static final long serialVersionUID = 1L;
@@ -54,14 +78,21 @@ public class TupleDesc implements Serializable {
      * specified types, with associated named fields.
      * 
      * @param typeAr
-     *            array specifying the number of and types of fields in this
-     *            TupleDesc. It must contain at least one entry.
+     *                array specifying the number of and types of fields in this
+     *                TupleDesc. It must contain at least one entry.
      * @param fieldAr
-     *            array specifying the names of the fields. Note that names may
-     *            be null.
+     *                array specifying the names of the fields. Note that names may
+     *                be null.
      */
+    public TupleDesc() {
+    }
+
     public TupleDesc(Type[] typeAr, String[] fieldAr) {
+        tdItems = new TDItem[typeAr.length];
         // some code goes here
+        for (int i = 0; i < typeAr.length; ++i) {
+            tdItems[i] = new TDItem(typeAr[i], fieldAr[i]);
+        }
     }
 
     /**
@@ -69,11 +100,15 @@ public class TupleDesc implements Serializable {
      * fields of the specified types, with anonymous (unnamed) fields.
      * 
      * @param typeAr
-     *            array specifying the number of and types of fields in this
-     *            TupleDesc. It must contain at least one entry.
+     *               array specifying the number of and types of fields in this
+     *               TupleDesc. It must contain at least one entry.
      */
     public TupleDesc(Type[] typeAr) {
+        tdItems = new TDItem[typeAr.length];
         // some code goes here
+        for (int i = 0; i < typeAr.length; ++i) {
+            tdItems[i] = new TDItem(typeAr[i], null);
+        }
     }
 
     /**
@@ -81,50 +116,57 @@ public class TupleDesc implements Serializable {
      */
     public int numFields() {
         // some code goes here
-        return 0;
+        return tdItems.length;
     }
 
     /**
      * Gets the (possibly null) field name of the ith field of this TupleDesc.
      * 
      * @param i
-     *            index of the field name to return. It must be a valid index.
+     *          index of the field name to return. It must be a valid index.
      * @return the name of the ith field
      * @throws NoSuchElementException
-     *             if i is not a valid field reference.
+     *                                if i is not a valid field reference.
      */
     public String getFieldName(int i) throws NoSuchElementException {
         // some code goes here
-        return null;
+        return tdItems[i].fieldName;
     }
 
     /**
      * Gets the type of the ith field of this TupleDesc.
      * 
      * @param i
-     *            The index of the field to get the type of. It must be a valid
-     *            index.
+     *          The index of the field to get the type of. It must be a valid
+     *          index.
      * @return the type of the ith field
      * @throws NoSuchElementException
-     *             if i is not a valid field reference.
+     *                                if i is not a valid field reference.
      */
     public Type getFieldType(int i) throws NoSuchElementException {
         // some code goes here
-        return null;
+        return tdItems[i].fieldType;
     }
 
     /**
      * Find the index of the field with a given name.
      * 
      * @param name
-     *            name of the field.
+     *             name of the field.
      * @return the index of the field that is first to have the given name.
      * @throws NoSuchElementException
-     *             if no field with a matching name is found.
+     *                                if no field with a matching name is found.
      */
     public int fieldNameToIndex(String name) throws NoSuchElementException {
+        if (name == null)
+            throw new NoSuchElementException("null");
         // some code goes here
-        return 0;
+        for (int i = 0; i < tdItems.length; ++i) {
+            if (name.equals(tdItems[i].fieldName))
+                return i;
+        }
+
+        throw new NoSuchElementException(name);
     }
 
     /**
@@ -133,7 +175,11 @@ public class TupleDesc implements Serializable {
      */
     public int getSize() {
         // some code goes here
-        return 0;
+        int size = 0;
+        for (TDItem item : tdItems) {
+            size += item.fieldType.getLen();
+        }
+        return size;
     }
 
     /**
@@ -148,7 +194,11 @@ public class TupleDesc implements Serializable {
      */
     public static TupleDesc merge(TupleDesc td1, TupleDesc td2) {
         // some code goes here
-        return null;
+        TupleDesc newtupleDesc = new TupleDesc();
+        newtupleDesc.tdItems = new TDItem[td1.numFields() + td2.numFields()];
+        System.arraycopy(td1.tdItems, 0, newtupleDesc.tdItems, 0, td1.tdItems.length);
+        System.arraycopy(td2.tdItems, 0, newtupleDesc.tdItems, td1.tdItems.length, td2.tdItems.length);
+        return newtupleDesc;
     }
 
     /**
@@ -158,13 +208,25 @@ public class TupleDesc implements Serializable {
      * for every i.
      * 
      * @param o
-     *            the Object to be compared for equality with this TupleDesc.
+     *          the Object to be compared for equality with this TupleDesc.
      * @return true if the object is equal to this TupleDesc.
      */
 
     public boolean equals(Object o) {
         // some code goes here
-        return false;
+        if (!TupleDesc.class.isInstance(o))
+            return false;
+        TupleDesc other = (TupleDesc) o;
+
+        if (this.tdItems.length != other.tdItems.length)
+            return false;
+
+        for (int i = 0; i < this.tdItems.length; ++i) {
+            if (!this.tdItems[i].fieldType.equals(other.tdItems[i].fieldType))
+                return false;
+        }
+
+        return true;
     }
 
     public int hashCode() {
@@ -182,6 +244,11 @@ public class TupleDesc implements Serializable {
      */
     public String toString() {
         // some code goes here
-        return "";
+        String str = "";
+        for (int i = 0; i < tdItems.length - 1; ++i)
+            str += tdItems[i].toString() + ", ";
+        str += tdItems[tdItems.length - 1].toString();
+
+        return str;
     }
 }

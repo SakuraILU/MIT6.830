@@ -13,15 +13,21 @@ public class Tuple implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    TupleDesc tupleDesc;
+    private Field fields[];
+    RecordId recordId;
+
     /**
      * Create a new tuple with the specified schema (type).
      *
      * @param td
-     *            the schema of this tuple. It must be a valid TupleDesc
-     *            instance with at least one field.
+     *           the schema of this tuple. It must be a valid TupleDesc
+     *           instance with at least one field.
      */
     public Tuple(TupleDesc td) {
         // some code goes here
+        tupleDesc = td;
+        fields = new Field[td.numFields()];
     }
 
     /**
@@ -29,7 +35,7 @@ public class Tuple implements Serializable {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        return null;
+        return tupleDesc;
     }
 
     /**
@@ -38,7 +44,7 @@ public class Tuple implements Serializable {
      */
     public RecordId getRecordId() {
         // some code goes here
-        return null;
+        return recordId;
     }
 
     /**
@@ -49,29 +55,31 @@ public class Tuple implements Serializable {
      */
     public void setRecordId(RecordId rid) {
         // some code goes here
+        recordId = rid;
     }
 
     /**
      * Change the value of the ith field of this tuple.
      *
      * @param i
-     *            index of the field to change. It must be a valid index.
+     *          index of the field to change. It must be a valid index.
      * @param f
-     *            new value for the field.
+     *          new value for the field.
      */
     public void setField(int i, Field f) {
         // some code goes here
+        fields[i] = f;
     }
 
     /**
      * @return the value of the ith field, or null if it has not been set.
      *
      * @param i
-     *            field index to return. Must be a valid index.
+     *          field index to return. Must be a valid index.
      */
     public Field getField(int i) {
         // some code goes here
-        return null;
+        return fields[i];
     }
 
     /**
@@ -84,24 +92,49 @@ public class Tuple implements Serializable {
      */
     public String toString() {
         // some code goes here
-        throw new UnsupportedOperationException("Implement this");
+        String str = "";
+        for (int i = 0; i < fields.length - 1; ++i) {
+            str += (fields[i].toString() + '\t');
+        }
+        str += fields[fields.length - 1].toString();
+
+        return str;
+        // throw new UnsupportedOperationException("Implement this");
     }
 
     /**
      * @return
-     *        An iterator which iterates over all the fields of this tuple
-     * */
-    public Iterator<Field> fields()
-    {
+     *         An iterator which iterates over all the fields of this tuple
+     */
+    private class TupleIterator implements Iterator<Field> {
+        int nextPOs = 0;
+
+        public TupleIterator(int n) {
+            nextPOs = n;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return nextPOs < fields.length;
+        }
+
+        @Override
+        public Field next() {
+            return fields[nextPOs++];
+        }
+
+    }
+
+    public Iterator<Field> fields() {
         // some code goes here
-        return null;
+        return new TupleIterator(0);
     }
 
     /**
      * reset the TupleDesc of this tuple (only affecting the TupleDesc)
-     * */
-    public void resetTupleDesc(TupleDesc td)
-    {
+     */
+    public void resetTupleDesc(TupleDesc td) {
         // some code goes here
+        tupleDesc = td;
     }
 }

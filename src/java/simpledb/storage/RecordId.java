@@ -2,6 +2,8 @@ package simpledb.storage;
 
 import java.io.Serializable;
 
+import javax.naming.ldap.HasControls;
+
 /**
  * A RecordId is a reference to a specific tuple on a specific page of a
  * specific table.
@@ -10,17 +12,25 @@ public class RecordId implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    // (pid, tupleno) makes unique for every tuple in the table
+    // this tuple is in which page
+    private PageId pid;
+    // the number of this tuple WITHIN the page
+    private int tupleno;
+
     /**
      * Creates a new RecordId referring to the specified PageId and tuple
      * number.
      * 
      * @param pid
-     *            the pageid of the page on which the tuple resides
+     *                the pageid of the page on which the tuple resides
      * @param tupleno
-     *            the tuple number within the page.
+     *                the tuple number within the page.
      */
     public RecordId(PageId pid, int tupleno) {
         // some code goes here
+        this.pid = pid;
+        this.tupleno = tupleno;
     }
 
     /**
@@ -28,7 +38,7 @@ public class RecordId implements Serializable {
      */
     public int getTupleNumber() {
         // some code goes here
-        return 0;
+        return tupleno;
     }
 
     /**
@@ -36,7 +46,7 @@ public class RecordId implements Serializable {
      */
     public PageId getPageId() {
         // some code goes here
-        return null;
+        return pid;
     }
 
     /**
@@ -48,7 +58,12 @@ public class RecordId implements Serializable {
     @Override
     public boolean equals(Object o) {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        if (!RecordId.class.isInstance(o))
+            return false;
+
+        RecordId other = (RecordId) o;
+
+        return this.tupleno == other.tupleno && this.pid.equals(other.pid);
     }
 
     /**
@@ -60,8 +75,11 @@ public class RecordId implements Serializable {
     @Override
     public int hashCode() {
         // some code goes here
-        throw new UnsupportedOperationException("implement this");
-
+        Integer tupleno = this.tupleno;
+        int hashcode = 1;
+        hashcode = hashcode * 31 + pid.hashCode();
+        hashcode = hashcode * 31 + tupleno.hashCode();
+        return hashcode;
     }
 
 }
