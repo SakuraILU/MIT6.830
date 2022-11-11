@@ -3,13 +3,12 @@ package simpledb.storage;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
-import simpledb.common.DeadlockException;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
+import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -85,7 +84,7 @@ public class BufferPool {
         // max chache size is numPages, if more than that, throw an error
         // currently, no eviction is implemented
         if (pagesInBuffer.size() >= numPages)
-            throw new DbException("Out of page size limit");
+            evictPage();
 
         // see if this page is in hashtable, if not, read out this page and
         // store <pid, page> in hashtable
@@ -160,6 +159,12 @@ public class BufferPool {
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile f = Database.getCatalog().getDatabaseFile(tableId);
+        ArrayList<Page> pagesModified = (ArrayList<Page>) f.insertTuple(tid, t);
+        for (Page page : pagesModified) {
+            page.markDirty(true, tid);
+            pagesInBuffer.put(page.getId().hashCode(), page);
+        }
     }
 
     /**
@@ -179,6 +184,10 @@ public class BufferPool {
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         // not necessary for lab1
+        DbFile f = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
+        ArrayList<Page> pagesModified = (ArrayList<Page>) f.deleteTuple(tid, t);
+        for (Page page : pagesModified)
+            page.markDirty(true, tid);
     }
 
     /**
@@ -189,7 +198,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-
+        // for (Page page : pagesInBuffer.values()) {
+        // flushPage(page.getId());
+        // }
     }
 
     /**
@@ -204,6 +215,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
+        pagesInBuffer.remove(pid.hashCode());
     }
 
     /**
@@ -214,6 +226,10 @@ public class BufferPool {
     private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+        Page page = pagesInBuffer.get(pid.hashCode());
+        DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
+        f.writePage(page);
+        pagesInBuffer.remove(page.getId().hashCode());
     }
 
     /**
@@ -231,6 +247,14 @@ public class BufferPool {
     private synchronized void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        for (Page page : pagesInBuffer.values()) {
+            try {
+                flushPage(page.getId());
+                return;
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
 }

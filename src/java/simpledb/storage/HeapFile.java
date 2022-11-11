@@ -2,13 +2,10 @@ package simpledb.storage;
 
 import simpledb.common.Database;
 import simpledb.common.DbException;
-import simpledb.common.Debug;
-import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
-import java.nio.Buffer;
 import java.util.*;
 
 /**
@@ -37,7 +34,6 @@ public class HeapFile implements DbFile {
         // some code goes here
         this.f = f;
         this.td = td;
-        System.out.print(td);
         // System.out.println(String.format("filesize is %d", f.length()));
     }
 
@@ -78,7 +74,6 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public Page readPage(PageId pid) {
         // some code goes here
-
         // each page needs to be complete
         int pgsize = BufferPool.getPageSize();
         // if this page is a complete page, the start of next page should <= f.length()
@@ -111,6 +106,20 @@ public class HeapFile implements DbFile {
     public void writePage(Page page) throws IOException {
         // some code goes here
         // not necessary for lab1
+
+        // convert HeapPage into bytestream data and write into file (position is pgsize
+        // * pgNo)
+        byte[] pageData = page.getPageData();
+        RandomAccessFile randomFile;
+        try {
+            randomFile = new RandomAccessFile(f, "rw");
+            randomFile.seek(BufferPool.getPageSize() * page.getId().getPageNumber()); // set read position of the
+                                                                                      // randomReader
+            randomFile.write(pageData, 0, BufferPool.getPageSize());
+            randomFile.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -122,18 +131,55 @@ public class HeapFile implements DbFile {
     }
 
     // see DbFile.java for javadocs
+    // a pretty interesting note: We may extend HeapFile class into some more
+    // advance class,
+    // e.g. give it a tuple t, it insert t in every page of this table...
+    // so the abstrac class returns List<Page> rather than a single page
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
-        return null;
         // not necessary for lab1
+
+        ArrayList<Page> pageArray = new ArrayList<Page>();
+
+        for (int pgNo = 0; pgNo < numPages(); ++pgNo) {
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pgNo), null);
+            if (page.getNumEmptySlots() > 0) {
+                page.insertTuple(t);
+                page.markDirty(true, tid);
+                pageArray.add(page);
+                return pageArray;
+            }
+        }
+
+        // all pages in the file is full, append a new empty page in the file
+        byte[] emptyPageData = HeapPage.createEmptyPageData();
+        FileOutputStream filewriter = new FileOutputStream(f, true); // append: true
+        try {
+            filewriter.write(emptyPageData);
+        } catch (IOException e) {
+            filewriter.close();
+            e.printStackTrace();
+        }
+        filewriter.close();
+
+        // malloc a new HeapPage in memory, becuase it is also empty as the new page in
+        // the file, don't need to write this HeapPage into disk
+        HeapPage page = new HeapPage(new HeapPageId(getId(), numPages() - 1), emptyPageData);
+        page.insertTuple(t);
+        pageArray.add(page);
+        return pageArray;
     }
 
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // some code goes here
-        return null;
+        ArrayList<Page> pageArray = new ArrayList<Page>();
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, t.recordId.getPageId(), null);
+        page.deleteTuple(t);
+        pageArray.add(page);
+        return pageArray;
         // not necessary for lab1
     }
 
@@ -150,7 +196,6 @@ public class HeapFile implements DbFile {
 
         // use open to initialize, if not open, hasNext() and next() shouldn't fail and
         // throw error!
-        // i don't know why design like this, but just follow it at least...
         @Override
         public void open() throws DbException, TransactionAbortedException {
             nextPgNo = 0;
@@ -159,12 +204,22 @@ public class HeapFile implements DbFile {
         }
 
         @Override
-        public boolean hasNext() {
+        public boolean hasNext() throws DbException, TransactionAbortedException {
             // unopened yet
             if (tupleItr == null)
                 return false;
-            // System.out.println("hasnext? " + nextPgNo + " total is " + numPages());
-            return tupleItr.hasNext() || nextPgNo < numPages();
+
+            // the current page has been iterated over
+            // hasNext() method detemine whether has next tuple, so here must
+            // has next page if current page is iterated over when next() is called
+            while (!tupleItr.hasNext()) {
+                if (nextPgNo >= numPages())
+                    return false;
+                HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), nextPgNo++),
+                        null); // should iterate the next page
+                tupleItr = page.iterator();
+            }
+            return true;
         }
 
         @Override
@@ -173,14 +228,6 @@ public class HeapFile implements DbFile {
             if (tupleItr == null)
                 throw new NoSuchElementException("HeapFileIterator is not opened yet.");
 
-            // the current page has been iterated over
-            // hasNext() method detemine whether has next tuple, so here must
-            // has next page if current page is iterated over when next() is called
-            if (!tupleItr.hasNext()) {
-                HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), nextPgNo++),
-                        null); // should iterate the next page
-                tupleItr = page.iterator();
-            }
             return tupleItr.next(); // return next tuple
         }
 

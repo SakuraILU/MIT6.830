@@ -14,44 +14,53 @@ public class Join extends Operator {
 
     private static final long serialVersionUID = 1L;
 
+    private JoinPredicate p;
+    private OpIterator[] children;
+    private Tuple tuple0; // In next() method, join change tuple of the first child only when the
+                          // iteration of second child is over, thus we need to keep the tuple of the
+                          // first child globally in the class...
+
     /**
      * Constructor. Accepts two children to join and the predicate to join them
      * on
      * 
      * @param p
-     *            The predicate to use to join the children
+     *               The predicate to use to join the children
      * @param child1
-     *            Iterator for the left(outer) relation to join
+     *               Iterator for the left(outer) relation to join
      * @param child2
-     *            Iterator for the right(inner) relation to join
+     *               Iterator for the right(inner) relation to join
      */
     public Join(JoinPredicate p, OpIterator child1, OpIterator child2) {
         // some code goes here
+        this.p = p;
+        this.children = new OpIterator[] { child1, child2 };
+        tuple0 = null;
     }
 
     public JoinPredicate getJoinPredicate() {
         // some code goes here
-        return null;
+        return p;
     }
 
     /**
      * @return
-     *       the field name of join field1. Should be quantified by
-     *       alias or table name.
-     * */
+     *         the field name of join field1. Should be quantified by
+     *         alias or table name.
+     */
     public String getJoinField1Name() {
         // some code goes here
-        return null;
+        return children[0].getTupleDesc().getFieldName(p.getField2());
     }
 
     /**
      * @return
-     *       the field name of join field2. Should be quantified by
-     *       alias or table name.
-     * */
+     *         the field name of join field2. Should be quantified by
+     *         alias or table name.
+     */
     public String getJoinField2Name() {
         // some code goes here
-        return null;
+        return children[1].getTupleDesc().getFieldName(p.getField1());
     }
 
     /**
@@ -60,20 +69,31 @@ public class Join extends Operator {
      */
     public TupleDesc getTupleDesc() {
         // some code goes here
-        return null;
+        return TupleDesc.merge(children[0].getTupleDesc(), children[1].getTupleDesc());
     }
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
         // some code goes here
+        super.open();
+        children[0].open();
+        children[1].open();
+        // set the first tuple0
+        if (children[0].hasNext())
+            tuple0 = children[0].next();
     }
 
     public void close() {
         // some code goes here
+        children[1].close();
+        children[0].close();
+        super.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
         // some code goes here
+        close();
+        open();
     }
 
     /**
@@ -96,18 +116,37 @@ public class Join extends Operator {
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
         // some code goes here
+        Tuple tuple1 = null;
+
+        // no more tuple in the first child, return null
+        while (tuple0 != null) {
+            while (children[1].hasNext()) {
+                tuple1 = children[1].next();
+                if (p.filter(tuple0, tuple1))
+                    return Tuple.merge(tuple0, tuple1);
+            }
+            // if the second child is iterated over, rewind it to the beginning and move
+            // tuple0 to the next
+            children[1].rewind();
+            if (children[0].hasNext())
+                tuple0 = children[0].next();
+            // no more tuple in the first child, join is over. set tuple0 to null..
+            else
+                tuple0 = null;
+        }
         return null;
     }
 
     @Override
     public OpIterator[] getChildren() {
         // some code goes here
-        return null;
+        return children;
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
         // some code goes here
+        this.children = children;
     }
 
 }

@@ -2,7 +2,6 @@ package simpledb.storage;
 
 import simpledb.common.Database;
 import simpledb.common.DbException;
-import simpledb.common.Debug;
 import simpledb.common.Catalog;
 import simpledb.transaction.TransactionId;
 
@@ -27,6 +26,10 @@ public class HeapPage implements Page {
 
     byte[] oldData;
     private final Byte oldDataLock = (byte) 0;
+
+    private final int tupleNumPerHead = 8;
+    private boolean isDirty;
+    private TransactionId tid;
 
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
@@ -272,6 +275,14 @@ public class HeapPage implements Page {
     public void deleteTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+        int slotId = t.getRecordId().getTupleNumber();
+        if (!t.getRecordId().getPageId().equals(pid) || (slotId < 0 || slotId >= numSlots))
+            throw new DbException("This tuple is not in the page");
+        if (!isSlotUsed(slotId))
+            throw new DbException("This slot is already empty");
+
+        tuples[slotId] = null;
+        markSlotUsed(slotId, false);
     }
 
     /**
@@ -280,11 +291,26 @@ public class HeapPage implements Page {
      * 
      * @throws DbException if the page is full (no empty slots) or tupledesc
      *                     is mismatch.
-     * @param t The tuple to add.
+     * @param t The tuple to add. note that t only has pid (insert into this page),
+     *          but its tupleNo must be determined here (an empty slot)
      */
     public void insertTuple(Tuple t) throws DbException {
         // some code goes here
         // not necessary for lab1
+
+        // no empty slot
+        if (getNumEmptySlots() == 0)
+            throw new DbException(String.format("HeapPage [%d, %d] is full", pid.getTableId(), pid.getPageNumber()));
+
+        for (int slotId = 0; slotId < numSlots; ++slotId) {
+            if (!isSlotUsed(slotId)) {
+                tuples[slotId] = t;
+                // now we know it's slotId, thus malloc a recordId for this tuple
+                tuples[slotId].setRecordId(new RecordId(pid, slotId));
+                markSlotUsed(slotId, true);
+                return;
+            }
+        }
     }
 
     /**
@@ -294,6 +320,8 @@ public class HeapPage implements Page {
     public void markDirty(boolean dirty, TransactionId tid) {
         // some code goes here
         // not necessary for lab1
+        isDirty = dirty;
+        this.tid = tid;
     }
 
     /**
@@ -303,7 +331,7 @@ public class HeapPage implements Page {
     public TransactionId isDirty() {
         // some code goes here
         // Not necessary for lab1
-        return null;
+        return (isDirty) ? tid : null;
     }
 
     /**
@@ -314,28 +342,39 @@ public class HeapPage implements Page {
         int numEmptySlots = 0;
         for (int i = 0; i < numSlots; ++i) {
             if (!isSlotUsed(i))
-                numEmptySlots++;
+                ++numEmptySlots;
         }
         return numEmptySlots;
     }
 
     /**
      * Returns true if associated slot on this page is filled.
+     * 
+     * @param i: slotId
      */
     public boolean isSlotUsed(int i) {
         // some code goes here
         // every head store 8 bitmaps( 8 slots )
-        int num = i / 8;
-        int offset = i % 8;
+        int num = i / tupleNumPerHead;
+        int offset = i % tupleNumPerHead;
         return ((header[num] >> offset) & 0x1) == 1;
     }
 
     /**
      * Abstraction to fill or clear a slot on this page.
+     * 
+     * @param i:     slotId
+     * @param value: true for fill and false for clear
      */
     private void markSlotUsed(int i, boolean value) {
         // some code goes here
         // not necessary for lab1
+        int num = i / tupleNumPerHead;
+        int offset = (byte) (i % tupleNumPerHead);
+        if (value)
+            header[num] = (byte) (header[num] | (0x1 << offset)); // set that bit to 1
+        else
+            header[num] = (byte) (header[num] & (~(0x1 << offset))); // set that bit to 0
     }
 
     /**

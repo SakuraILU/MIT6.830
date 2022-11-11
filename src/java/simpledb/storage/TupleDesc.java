@@ -3,10 +3,7 @@ package simpledb.storage;
 import simpledb.common.Type;
 
 import java.io.Serializable;
-import java.security.NoSuchAlgorithmException;
 import java.util.*;
-
-import javax.naming.directory.InitialDirContext;
 
 /**
  * TupleDesc describes the schema of a tuple.
@@ -145,6 +142,9 @@ public class TupleDesc implements Serializable {
      */
     public Type getFieldType(int i) throws NoSuchElementException {
         // some code goes here
+        if (i < 0 || i > tdItems.length)
+            throw new NoSuchElementException("i is not a valid field reference");
+
         return tdItems[i].fieldType;
     }
 
@@ -194,11 +194,11 @@ public class TupleDesc implements Serializable {
      */
     public static TupleDesc merge(TupleDesc td1, TupleDesc td2) {
         // some code goes here
-        TupleDesc newtupleDesc = new TupleDesc();
-        newtupleDesc.tdItems = new TDItem[td1.numFields() + td2.numFields()];
-        System.arraycopy(td1.tdItems, 0, newtupleDesc.tdItems, 0, td1.tdItems.length);
-        System.arraycopy(td2.tdItems, 0, newtupleDesc.tdItems, td1.tdItems.length, td2.tdItems.length);
-        return newtupleDesc;
+        TupleDesc td = new TupleDesc();
+        td.tdItems = new TDItem[td1.numFields() + td2.numFields()];
+        System.arraycopy(td1.tdItems, 0, td.tdItems, 0, td1.tdItems.length);
+        System.arraycopy(td2.tdItems, 0, td.tdItems, td1.tdItems.length, td2.tdItems.length);
+        return td;
     }
 
     /**

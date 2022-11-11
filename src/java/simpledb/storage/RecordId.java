@@ -2,8 +2,6 @@ package simpledb.storage;
 
 import java.io.Serializable;
 
-import javax.naming.ldap.HasControls;
-
 /**
  * A RecordId is a reference to a specific tuple on a specific page of a
  * specific table.

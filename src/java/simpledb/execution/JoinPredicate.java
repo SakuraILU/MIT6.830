@@ -13,22 +13,29 @@ public class JoinPredicate implements Serializable {
 
     private static final long serialVersionUID = 1L;
 
+    private int numField1;
+    private Predicate.Op op;
+    private int numField2;
+
     /**
      * Constructor -- create a new predicate over two fields of two tuples.
      * 
      * @param field1
-     *            The field index into the first tuple in the predicate
+     *               The field index into the first tuple in the predicate
      * @param field2
-     *            The field index into the second tuple in the predicate
+     *               The field index into the second tuple in the predicate
      * @param op
-     *            The operation to apply (as defined in Predicate.Op); either
-     *            Predicate.Op.GREATER_THAN, Predicate.Op.LESS_THAN,
-     *            Predicate.Op.EQUAL, Predicate.Op.GREATER_THAN_OR_EQ, or
-     *            Predicate.Op.LESS_THAN_OR_EQ
+     *               The operation to apply (as defined in Predicate.Op); either
+     *               Predicate.Op.GREATER_THAN, Predicate.Op.LESS_THAN,
+     *               Predicate.Op.EQUAL, Predicate.Op.GREATER_THAN_OR_EQ, or
+     *               Predicate.Op.LESS_THAN_OR_EQ
      * @see Predicate
      */
     public JoinPredicate(int field1, Predicate.Op op, int field2) {
         // some code goes here
+        this.numField1 = field1;
+        this.op = op;
+        this.numField2 = field2;
     }
 
     /**
@@ -39,24 +46,23 @@ public class JoinPredicate implements Serializable {
      */
     public boolean filter(Tuple t1, Tuple t2) {
         // some code goes here
-        return false;
+        Field field1 = t1.getField(numField1);
+        Field field2 = t2.getField(numField2);
+        return field1.compare(op, field2);
     }
-    
-    public int getField1()
-    {
+
+    public int getField1() {
         // some code goes here
-        return -1;
+        return numField1;
     }
-    
-    public int getField2()
-    {
+
+    public int getField2() {
         // some code goes here
-        return -1;
+        return numField2;
     }
-    
-    public Predicate.Op getOperator()
-    {
+
+    public Predicate.Op getOperator() {
         // some code goes here
-        return null;
+        return op;
     }
 }

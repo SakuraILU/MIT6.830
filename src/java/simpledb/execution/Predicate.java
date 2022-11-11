@@ -64,7 +64,7 @@ public class Predicate implements Serializable {
      */
     public Predicate(int field, Op op, Field operand) {
         // some code goes here
-        this.NumField = field;
+        this.numField = field;
         this.op = op;
         this.operand = operand;
     }

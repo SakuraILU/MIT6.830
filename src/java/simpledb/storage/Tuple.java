@@ -1,8 +1,8 @@
 package simpledb.storage;
 
 import java.io.Serializable;
-import java.util.Arrays;
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -79,6 +79,9 @@ public class Tuple implements Serializable {
      */
     public Field getField(int i) {
         // some code goes here
+        if (i < 0 || i >= fields.length)
+            throw new NoSuchElementException("i is not a valid field reference");
+
         return fields[i];
     }
 
@@ -136,5 +139,12 @@ public class Tuple implements Serializable {
     public void resetTupleDesc(TupleDesc td) {
         // some code goes here
         tupleDesc = td;
+    }
+
+    public static Tuple merge(Tuple tuple1, Tuple tuple2) {
+        Tuple tuple = new Tuple(TupleDesc.merge(tuple1.getTupleDesc(), tuple2.getTupleDesc()));
+        System.arraycopy(tuple1.fields, 0, tuple.fields, 0, tuple1.fields.length);
+        System.arraycopy(tuple2.fields, 0, tuple.fields, tuple1.fields.length, tuple2.fields.length);
+        return tuple;
     }
 }

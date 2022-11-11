@@ -19,7 +19,7 @@ public abstract class Operator implements OpIterator {
     public boolean hasNext() throws DbException, TransactionAbortedException {
         if (!this.open)
             throw new IllegalStateException("Operator not yet open");
-        
+
         if (next == null)
             next = fetchNext();
         return next != null;
@@ -72,7 +72,7 @@ public abstract class Operator implements OpIterator {
      *         only one child, return an array of only one element. For join
      *         operators, the order of the children is not important. But they
      *         should be consistent among multiple calls.
-     * */
+     */
     public abstract OpIterator[] getChildren();
 
     /**
@@ -82,29 +82,29 @@ public abstract class Operator implements OpIterator {
      * 
      * 
      * @param children
-     *            the DbIterators which are to be set as the children(child) of
-     *            this operator
-     * */
+     *                 the DbIterators which are to be set as the children(child) of
+     *                 this operator
+     */
     public abstract void setChildren(OpIterator[] children);
 
     /**
      * @return return the TupleDesc of the output tuples of this operator
-     * */
+     */
     public abstract TupleDesc getTupleDesc();
 
     /**
      * @return The estimated cardinality of this operator. Will only be used in
      *         lab7
-     * */
+     */
     public int getEstimatedCardinality() {
         return this.estimatedCardinality;
     }
 
     /**
      * @param card
-     *            The estimated cardinality of this operator Will only be used
-     *            in lab7
-     * */
+     *             The estimated cardinality of this operator Will only be used
+     *             in lab7
+     */
     public void setEstimatedCardinality(int card) {
         this.estimatedCardinality = card;
     }

@@ -100,7 +100,7 @@ public class Catalog {
         // some code goes here
         for (Map.Entry<Integer, CatalogEntry> entry : catalogEntrys.entrySet()) {
             if (name.equals(entry.getValue().name))
-                return entry.getValue().file.getId();
+                return entry.getKey();
         }
 
         throw new NoSuchElementException(name);
