@@ -6,10 +6,8 @@ import simpledb.transaction.TransactionId;
 import simpledb.common.Type;
 import simpledb.common.DbException;
 import simpledb.storage.DbFileIterator;
-import simpledb.storage.HeapFile;
 import simpledb.storage.Tuple;
 import simpledb.storage.TupleDesc;
-import simpledb.storage.TupleDesc.TDItem;
 
 import java.util.*;
 
@@ -143,6 +141,7 @@ public class SeqScan implements OpIterator {
     public void rewind() throws DbException, NoSuchElementException,
             TransactionAbortedException {
         // some code goes here
-        dbfileItr.rewind();
+        close();
+        open();
     }
 }

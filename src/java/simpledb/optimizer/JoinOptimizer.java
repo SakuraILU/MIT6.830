@@ -3,11 +3,14 @@ package simpledb.optimizer;
 import simpledb.common.Database;
 import simpledb.ParsingException;
 import simpledb.execution.*;
+import simpledb.execution.Predicate.Op;
+import simpledb.storage.HeapFile;
 
 import java.util.*;
 
 import javax.swing.*;
 import javax.swing.tree.*;
+import javax.xml.crypto.Data;
 
 /**
  * The JoinOptimizer class is responsible for ordering a series of joins
@@ -17,6 +20,8 @@ import javax.swing.tree.*;
 public class JoinOptimizer {
     final LogicalPlan p;
     final List<LogicalJoinNode> joins;
+
+    private static final double rangeJoinCardPorporional = 0.3;
 
     /**
      * Constructor
@@ -129,7 +134,13 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+
+            // 1. cost1: first table only scan once, thus IO cost of first table
+            // 2. card1 * cost2: second table will scan card1 times, thus IO cost of second
+            // table
+            // 3. card1 * card2: join will read tuple card1 * card2 times in memory, thus
+            // memory read cost of the join operation
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -174,6 +185,33 @@ public class JoinOptimizer {
             boolean t2pkey, Map<String, TableStats> stats,
             Map<String, Integer> tableAliasToId) {
         int card = 1;
+
+        if (joinOp.equals(Op.EQUALS)) {
+            // when t1 offers pkey, it's unique, every row of t2 can join at most one row of
+            // t1 (t1's key is unique)
+            // thus estimate card = card2,
+            // when t2 offers pkey, at most card = card1,
+            // when both, at most card1 or at most card2, so card = min(card1, card2)
+            if (t1pkey && t2pkey)
+                card = Math.min(card, card1);
+            else if (t1pkey)
+                card = card2;
+            else if (t2pkey)
+                card = card1;
+            // no pkey, consider that one row in t1 equation join other row in t2, equation
+            // join usually offers seldom
+            // rows, bcz one table usually doesn't have many same values... so estimate
+            // usually at least card = t2
+            // swap t1 and t2, usually at least card = t2
+            // so, card = max(card1, card2)
+            else
+                card = Math.max(card1, card2);
+        } else
+            // non-equal join, every row in t1 many join several rows with t2 (>, <, !=...),
+            // so it should be consistent with the order of magnitude of card1 * card2
+            // lab guide says 0.3 is ok...
+            card = (int) (rangeJoinCardPorporional * card1 * card2);
+
         // some code goes here
         return card <= 0 ? 1 : card;
     }
@@ -196,6 +234,11 @@ public class JoinOptimizer {
 
         for (int i = 0; i < size; i++) {
             Set<Set<T>> newels = new HashSet<>();
+            // els stores set_{i-1} with i-1 element
+            // take a set_{i-1} in els out, add one element in v into it, stores this new
+            // set_{i} in newels
+            // iterate every set_{i-1} and every t in list v, thus get every possible
+            // set_{i}
             for (Set<T> s : els) {
                 for (T t : v) {
                     Set<T> news = new HashSet<>(s);
@@ -203,7 +246,10 @@ public class JoinOptimizer {
                         newels.add(news);
                 }
             }
+            // newels is the subset set_{i} with i element, so make els refer to newels, now
+            // els stores set_{i}
             els = newels;
+            // continue to add one more element in els until iterate size times
         }
 
         return els;
@@ -242,7 +288,37 @@ public class JoinOptimizer {
 
         // some code goes here
         // Replace the following
-        return joins;
+        PlanCache pc = new PlanCache(); // PlanCach store the best cost for every NodeSet,
+                                        // so maintain the best cost for every NodeSet
+        for (int size = 1; size <= joins.size(); ++size) {
+            for (Set<LogicalJoinNode> nodeSet : enumerateSubsets(joins, size)) {
+                double bestCostSoFar = Double.MAX_VALUE;
+                // try every best order of Set{joins - ji} join ji
+                // and get the one with best cost, it is the best order of Set{joins}
+                for (LogicalJoinNode node : nodeSet) {
+                    CostCard costcard = computeCostAndCardOfSubplan(stats, filterSelectivities, node, nodeSet,
+                            bestCostSoFar, pc);
+
+                    if (costcard == null)
+                        continue;
+
+                    // computeCostAndCardOfSubplan() just use PlanCache but didn't use...so we need
+                    // maintain here
+                    // if get a better cost for this nodeSet, stores(replace previous if has) it
+                    if (costcard.cost < bestCostSoFar) {
+                        bestCostSoFar = costcard.cost;
+                        pc.addPlan(nodeSet, costcard.cost, costcard.card, costcard.plan);
+                    }
+                }
+            }
+        }
+
+        List<LogicalJoinNode> bestJoinOrder = pc.getOrder(enumerateSubsets(joins, joins.size()).iterator().next());
+        if (explain) {
+            printJoins(bestJoinOrder, pc, stats, filterSelectivities);
+        }
+
+        return bestJoinOrder;
     }
 
     // ===================== Private Methods =================================
@@ -314,6 +390,8 @@ public class JoinOptimizer {
         int t1card, t2card;
         boolean leftPkey, rightPkey;
 
+        // Case1: consider table1 join table 2
+        // base case-- just one join in the list
         if (news.isEmpty()) { // base case -- both are base relations
             prevBest = new ArrayList<>();
             t1cost = stats.get(table1Name).estimateScanCost();
@@ -340,10 +418,13 @@ public class JoinOptimizer {
                 return null;
             }
 
+            // best join order in the list for set{news - joinToRemove}
             double prevBestCost = pc.getCost(news);
             int bestCard = pc.getCard(news);
 
             // estimate cost of right subtree
+            // if table1 is joined in set{news - joinToRemove}, join table2 on the right of
+            // best order
             if (doesJoin(prevBest, table1Alias)) { // j.t1 is in prevBest
                 t1cost = prevBestCost; // left side just has cost of whatever
                                        // left
@@ -360,9 +441,11 @@ public class JoinOptimizer {
                                         filterSelectivities.get(j.t2Alias));
                 rightPkey = j.t2Alias != null && isPkey(j.t2Alias,
                         j.f2PureName);
+                // if table2 is joined in set{news - joinToRemove}, join table1 on the right of
+                // best order
             } else if (doesJoin(prevBest, j.t2Alias)) { // j.t2 is in prevbest
                                                         // (both
-                // shouldn't be)
+                                                        // shouldn't be)
                 t2cost = prevBestCost; // left side just has cost of whatever
                                        // left
                 // subtree is
@@ -372,7 +455,9 @@ public class JoinOptimizer {
                 t1card = stats.get(table1Name).estimateTableCardinality(
                         filterSelectivities.get(j.t1Alias));
                 leftPkey = isPkey(j.t1Alias, j.f1PureName);
-
+                // no table is joined in previous best order...this joinNode is totally isolate
+                // with best order...
+                // can not join them together
             } else {
                 // don't consider this plan if one of j.t1 or j.t2
                 // isn't a table joined in prevBest (cross product)
@@ -383,6 +468,8 @@ public class JoinOptimizer {
         // case where prevbest is left
         double cost1 = estimateJoinCost(j, t1card, t2card, t1cost, t2cost);
 
+        // Case2: consider table2 join table1, node cost and card is already get, just
+        // swap them...
         LogicalJoinNode j2 = j.swapInnerOuter();
         double cost2 = estimateJoinCost(j2, t2card, t1card, t2cost, t1cost);
         if (cost2 < cost1) {

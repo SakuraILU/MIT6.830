@@ -5,7 +5,6 @@ import simpledb.common.Type;
 import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
-import simpledb.transaction.Transaction;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -15,7 +14,7 @@ import java.util.concurrent.ConcurrentMap;
 
 /**
  * TableStats represents statistics (e.g., histograms) about base tables in a
- * query. 
+ * query.
  * 
  * This class is not needed in implementing lab1 and lab2.
  */
@@ -32,9 +31,8 @@ public class TableStats {
     public static void setTableStats(String tablename, TableStats stats) {
         statsMap.put(tablename, stats);
     }
-    
-    public static void setStatsMap(Map<String,TableStats> s)
-    {
+
+    public static void setStatsMap(Map<String, TableStats> s) {
         try {
             java.lang.reflect.Field statsMapF = TableStats.class.getDeclaredField("statsMap");
             statsMapF.setAccessible(true);
@@ -67,16 +65,23 @@ public class TableStats {
      * histograms.
      */
     static final int NUM_HIST_BINS = 100;
+    private int tableid;
+    private int ioCostPerPage;
+    private int numTuple;
+    private HashMap<Integer, IntHistogram> iHitograms;
+    private HashMap<Integer, StringHistogram> sHistograms;
+    private DbFile dbfile;
 
     /**
      * Create a new TableStats object, that keeps track of statistics on each
      * column of a table
      * 
      * @param tableid
-     *            The table over which to compute statistics
+     *                      The table over which to compute statistics
      * @param ioCostPerPage
-     *            The cost per page of IO. This doesn't differentiate between
-     *            sequential-scan IO and disk seeks.
+     *                      The cost per page of IO. This doesn't differentiate
+     *                      between
+     *                      sequential-scan IO and disk seeks.
      */
     public TableStats(int tableid, int ioCostPerPage) {
         // For this function, you'll have to get the
@@ -87,6 +92,71 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.tableid = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        this.numTuple = 0;
+        this.iHitograms = new HashMap<Integer, IntHistogram>();
+        this.sHistograms = new HashMap<Integer, StringHistogram>();
+
+        this.dbfile = Database.getCatalog().getDatabaseFile(tableid);
+        int numField = dbfile.getTupleDesc().numFields();
+        int[] max = new int[numField]; // min value of every bucket (only INT_TYPE)
+        int[] min = new int[numField]; // max value of every bucket (only INT_TYPE)
+        SeqScan scan = new SeqScan(null, tableid); // scan this table
+        try {
+            scan.open();
+            // scan once to get mins and maxs of every field, to determine how to malloc
+            // their intHIstograms
+            while (scan.hasNext()) {
+                numTuple++;
+                Tuple tuple = scan.next();
+                for (int i = 0; i < numField; ++i) {
+                    // STRING_TYPE don't need min or max, because it is set roughly in
+                    // StringHistogram.
+                    if (dbfile.getTupleDesc().getFieldType(i).equals(Type.STRING_TYPE))
+                        continue;
+
+                    min[i] = Math.min(min[i], ((IntField) tuple.getField(i)).getValue());
+                    max[i] = Math.max(max[i], ((IntField) tuple.getField(i)).getValue());
+                }
+            }
+
+            // mallocate histograms for every field
+            for (int i = 0; i < numField; ++i) {
+                Type type = dbfile.getTupleDesc().getFieldType(i);
+                switch (type) {
+                    case INT_TYPE: {
+                        iHitograms.put(i, new IntHistogram(NUM_HIST_BINS, min[i], max[i]));
+                        break;
+                    }
+                    case STRING_TYPE: {
+                        sHistograms.put(i, new StringHistogram(NUM_HIST_BINS));
+                        break;
+                    }
+                }
+            }
+            scan.rewind();
+            // scan again to put values into histograms and get statistics
+            while (scan.hasNext()) {
+                Tuple tuple = scan.next();
+                for (int i = 0; i < numField; ++i) {
+                    Type type = dbfile.getTupleDesc().getFieldType(i);
+                    switch (type) {
+                        case INT_TYPE: {
+                            iHitograms.get(i).addValue(((IntField) tuple.getField(i)).getValue());
+                            break;
+                        }
+                        case STRING_TYPE: {
+                            sHistograms.get(i).addValue(((StringField) tuple.getField(i)).getValue());
+                            break;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
     }
 
     /**
@@ -103,7 +173,9 @@ public class TableStats {
      */
     public double estimateScanCost() {
         // some code goes here
-        return 0;
+
+        // IO cost, how much cost we'll take to read the whole table
+        return ((HeapFile) dbfile).numPages() * ioCostPerPage;
     }
 
     /**
@@ -111,25 +183,31 @@ public class TableStats {
      * predicate with selectivity selectivityFactor is applied.
      * 
      * @param selectivityFactor
-     *            The selectivity of any predicates over the table
+     *                          The selectivity of any predicates over the table
      * @return The estimated cardinality of the scan with the specified
      *         selectivityFactor
      */
     public int estimateTableCardinality(double selectivityFactor) {
         // some code goes here
-        return 0;
+
+        // how many tuples passed the fliter
+        return (int) (numTuple * selectivityFactor);
     }
 
     /**
      * The average selectivity of the field under op.
+     * 
      * @param field
-     *        the index of the field
+     *              the index of the field
      * @param op
-     *        the operator in the predicate
-     * The semantic of the method is that, given the table, and then given a
-     * tuple, of which we do not know the value of the field, return the
-     * expected selectivity. You may estimate this value from the histograms.
-     * */
+     *              the operator in the predicate
+     *              The semantic of the method is that, given the table, and then
+     *              given a
+     *              tuple, of which we do not know the value of the field, return
+     *              the
+     *              expected selectivity. You may estimate this value from the
+     *              histograms.
+     */
     public double avgSelectivity(int field, Predicate.Op op) {
         // some code goes here
         return 1.0;
@@ -140,25 +218,34 @@ public class TableStats {
      * table.
      * 
      * @param field
-     *            The field over which the predicate ranges
+     *                 The field over which the predicate ranges
      * @param op
-     *            The logical operation in the predicate
+     *                 The logical operation in the predicate
      * @param constant
-     *            The value against which the field is compared
+     *                 The value against which the field is compared
      * @return The estimated selectivity (fraction of tuples that satisfy) the
      *         predicate
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
         // some code goes here
-        return 1.0;
+        Type type = dbfile.getTupleDesc().getFieldType(field);
+        switch (type) {
+            case INT_TYPE: {
+                return iHitograms.get(field).estimateSelectivity(op, ((IntField) constant).getValue());
+            }
+            case STRING_TYPE: {
+                return sHistograms.get(field).estimateSelectivity(op, ((StringField) constant).getValue());
+            }
+        }
+        throw new IllegalArgumentException("Shouldn't really reach here");
     }
 
     /**
      * return the total number of tuples in this table
-     * */
+     */
     public int totalTuples() {
         // some code goes here
-        return 0;
+        return numTuple;
     }
 
 }
