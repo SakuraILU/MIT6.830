@@ -31,6 +31,8 @@ public class HeapPage implements Page {
     private boolean isDirty;
     private TransactionId tid;
 
+    private long timestamp; // timestamp records when to used this page (read or write tuples)
+
     /**
      * Create a HeapPage from a set of bytes of data read from disk.
      * The format of a HeapPage is a set of header bytes indicating
@@ -54,6 +56,8 @@ public class HeapPage implements Page {
         this.pid = id;
         this.td = Database.getCatalog().getTupleDesc(id.getTableId());
         this.numSlots = getNumTuples();
+        this.timestamp = System.currentTimeMillis();
+
         DataInputStream dis = new DataInputStream(new ByteArrayInputStream(data));
 
         // allocate and read the header slots of this page
@@ -283,6 +287,8 @@ public class HeapPage implements Page {
 
         tuples[slotId] = null;
         markSlotUsed(slotId, false);
+
+        this.timestamp = System.currentTimeMillis(); // delete (write) a tuple in this page
     }
 
     /**
@@ -308,6 +314,7 @@ public class HeapPage implements Page {
                 // now we know it's slotId, thus malloc a recordId for this tuple
                 tuples[slotId].setRecordId(new RecordId(pid, slotId));
                 markSlotUsed(slotId, true);
+                this.timestamp = System.currentTimeMillis(); // insert (write) a tuple on this page
                 return;
             }
         }
@@ -361,6 +368,13 @@ public class HeapPage implements Page {
     }
 
     /**
+     * Return timestamp (recent used) of this page
+     */
+    public long getTimestamp() {
+        return timestamp;
+    }
+
+    /**
      * Abstraction to fill or clear a slot on this page.
      * 
      * @param i:     slotId
@@ -401,6 +415,8 @@ public class HeapPage implements Page {
         }
 
         public Tuple next() {
+            // reading tuple in this page, update timestamp
+            timestamp = System.currentTimeMillis();
             return tuples[nextPos++];
         }
     }

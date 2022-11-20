@@ -8,7 +8,9 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Random;
+import java.util.Vector;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -22,8 +24,155 @@ import java.util.HashMap;
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
+    private static enum LockType {
+        SHARED, Exclusive
+    };
+
+    private class LockManager {
+        private class Lock {
+            public TransactionId tid; // which transcation holds this lock
+            public LockType type; // SHARED or EXCLUSIVE lock
+
+            Lock(TransactionId tid, LockType type) {
+                this.tid = tid;
+                this.type = type;
+            }
+
+            @Override
+            public boolean equals(Object obj) {
+                if (!this.getClass().isInstance(obj)) {
+                    return false;
+                }
+                Lock other = (Lock) obj;
+
+                return (this.tid == other.tid) && (this.type == other.type);
+            }
+
+            @Override
+            public String toString() {
+                return tid.toString() + "(" + type.toString() + ")  ";
+            }
+        }
+
+        private ConcurrentHashMap<PageId, Vector<Lock>> locksMap; // lab4 introduces multi-thread, so ConcurrentHashMap
+                                                                  // would be a better choice, bcz we don't need to lock
+                                                                  // the whole locksMap for modification
+
+        LockManager() {
+            locksMap = new ConcurrentHashMap<PageId, Vector<Lock>>();
+        }
+
+        public boolean acquireLock(TransactionId tid, PageId pid, LockType type) {
+            // if this pid has no locks, create one according to type
+            //
+            // Thread-safe: two threads may enter this if statement (locksmap only protect
+            // thread-safe inside itself). they may add locks for the same pid one by one
+            // through locksMap.put(), thus one locks will be override and makes the lock
+            // inside vanished...
+            // so, we need to lock the pid, makes only one thread can add locks for one pid
+            synchronized (pid) {
+                if (!locksMap.containsKey(pid)) {
+                    Vector<Lock> locks = new Vector<Lock>();
+                    locks.add(new Lock(tid, type));
+                    locksMap.put(pid, locks);
+                    return true;
+                }
+            }
+
+            Vector<Lock> locks = locksMap.get(pid);
+            // thread-safe: we need to add lock in locks(Vector, add and remove need to
+            // operate multi lock at the same time, so need to protect locks) and also read
+            // its property locks.size(), concurrency for the same locks is prohibited
+            synchronized (locks) {
+                // if tid already has a lock
+                for (Lock lock : locks) {
+                    if (lock.tid == tid)
+                        // 1. exactly same
+                        // 2. need Shared lock but has exclusive lock, exclusive lock supports read, so
+                        // just return true to say: ok, you can write
+                        if (lock.type == type || lock.type == LockType.Exclusive)
+                            return true;
+                        // need Exclusive lock but has a shared lock, if this pid only has this shared
+                        // lock,
+                        // no other tid is try to read or write, we can upgrade this shared->exlucisve,
+                        // bcz we
+                        // don't effect any one...
+                        else if (locks.size() == 1) {
+                            locks.get(0).type = LockType.Exclusive;
+                            return true;
+                        }
+                }
+
+                // this tid don't has a lock
+
+                if (type.equals(LockType.Exclusive)) {
+                    // on other tid is read or write, we can write
+                    if (locks.size() == 0) {
+                        locks.add(new Lock(tid, type));
+                    } else
+                        return false;
+                } else if (type.equals(LockType.SHARED)) {
+                    // on other tid is try to write, we can read
+                    for (Lock lock : locks) {
+                        if (lock.type == LockType.Exclusive)
+                            return false;
+                    }
+                    locks.add(new Lock(tid, type));
+                }
+            }
+            return true;
+        }
+
+        // tid releases the lock on this page
+        public boolean releaseLock(TransactionId tid, PageId pid) {
+            if (!locksMap.containsKey(pid))
+                return true;
+
+            Vector<Lock> locks = locksMap.get(pid);
+            // thread-safe: we need to remove lock in locks (add and remove need to operate
+            // multi lock at the same time, so need to protect locks) and read lock
+            // property lock.tid (protect lock or even locks more aggresively)
+            // so concurrency for the same locks is prohibited
+            // note: locksMap.remove() is ok, bcz it's ConcurrentHashMap
+            synchronized (locks) {
+
+                // one tid only has one lock at most according to LockManaer.acquireLock(), so
+                // if found one lock of this tid, just remove it and return
+                for (Lock lock : locks) {
+                    if (lock.tid == tid) {
+                        locks.remove(lock);
+
+                        // if locks of this pid is empty, remove locks Vector for save resources
+                        if (locks.size() == 0)
+                            locksMap.remove(pid);
+
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        // if tid holds a lock on this page
+        public boolean holdsLock(TransactionId tid, PageId pid) {
+            Vector<Lock> locks = locksMap.get(pid);
+            // thread-safe: we need to read lock property lock.tid
+            // so concurrency for the same lock is prohibited
+            for (Lock lock : locks) {
+                synchronized (lock) {
+                    if (lock.tid == tid) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+    }
+
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
+    private static final long TIMEOUT = 3000;
+    private static final int TIMEOUTOFFSET = 1500;
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
@@ -36,7 +185,8 @@ public class BufferPool {
 
     private int numPages;
     // HashMap: pageId --> Page
-    private HashMap<Integer, Page> pagesInBuffer;
+    private ConcurrentHashMap<PageId, Page> pagesInBuffer;
+    private LockManager lockManager;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -46,7 +196,8 @@ public class BufferPool {
     public BufferPool(int numPages) {
         // some code goes here
         this.numPages = numPages;
-        this.pagesInBuffer = new HashMap<Integer, Page>();
+        this.pagesInBuffer = new ConcurrentHashMap<PageId, Page>();
+        this.lockManager = new LockManager();
     }
 
     public static int getPageSize() {
@@ -77,24 +228,65 @@ public class BufferPool {
      * @param tid  the ID of the transaction requesting the page
      * @param pid  the ID of the requested page
      * @param perm the requested permissions on the page
+     *             (to be more accurately, what we gonna to deal with this page,
+     *             locks are set according to out purpose)
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
             throws TransactionAbortedException, DbException {
         // some code goes here
-        // max chache size is numPages, if more than that, throw an error
-        // currently, no eviction is implemented
-        if (pagesInBuffer.size() >= numPages)
-            evictPage();
+        LockType type = LockType.SHARED;
+        if (perm == Permissions.READ_ONLY)
+            type = LockType.SHARED;
+        else if (perm == Permissions.READ_WRITE)
+            type = LockType.Exclusive;
+        else
+            assert false : "Unsupported Permission type";
+
+        // Acquire locks in a round-robin fashion, and report an error if it times out
+        // VERY IMPORTANT NOTE: timeout limit need to be kind of random!!!!!!!!!
+        // Reason:
+        // otherwise, if two deadlocked tid t1 and t2 acquire this lock almost at the
+        // same time, after a fixed time, t1 throw an error first and being restart
+        // (will release its lock). if the lock causing deadlock is not realsed yet and
+        // then context is switched to t2, t2 still deadlocked and throw an error, t2
+        // will be restart too..... athough deadlock will be solved soon
+        //
+        // they both restart almost at the same time, acquire locks almost at the same
+        // time, repeat the process above again and agin, they will be restart and
+        // restart and restart...
+        //
+        // so random time can solve this problem, because they won't be almost the same
+        // time even if the acquire the lock causing deadlock situation at the same time
+        // even if the do both restart when acquire at the same time and timeout is the
+        // same unluckily,
+        // after several restart, the timeout should be different...otherwise you can
+        // buy some stock :)
+        long startTime = System.currentTimeMillis();
+        long timeout = TIMEOUT + new Random().nextInt(TIMEOUTOFFSET);
+        while (!lockManager.acquireLock(tid, pid, type)) {
+            if (System.currentTimeMillis() - startTime > timeout)
+                throw new TransactionAbortedException();
+
+            // do 200ms sleep to avoid overcrowding when many transactions applying for
+            // locks at the same time and to save CPU resources
+            try {
+                Thread.sleep(200);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
 
         // see if this page is in hashtable, if not, read out this page and
         // store <pid, page> in hashtable
-        if (!pagesInBuffer.containsKey(pid.hashCode())) {
+        if (!pagesInBuffer.containsKey(pid)) {
+            if (pagesInBuffer.size() >= numPages)
+                evictPage();
             // found this Dbfile in Catlog according to pid.tableId
             DbFile file = Database.getCatalog().getDatabaseFile(pid.getTableId());
-            Page page = file.readPage(pid);
-            pagesInBuffer.put(pid.hashCode(), page);
+            Page pageFromDisk = file.readPage(pid);
+            pagesInBuffer.put(pid, pageFromDisk);
         }
-        return pagesInBuffer.get(pid.hashCode());
+        return pagesInBuffer.get(pid);
     }
 
     /**
@@ -109,6 +301,7 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockManager.releaseLock(tid, pid);
     }
 
     /**
@@ -119,12 +312,14 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid) {
         // some code goes here
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
     public boolean holdsLock(TransactionId tid, PageId p) {
         // some code goes here
         // not necessary for lab1|lab2
+        lockManager.holdsLock(tid, p);
         return false;
     }
 
@@ -138,6 +333,31 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        for (Page page : pagesInBuffer.values()) {
+            // note: this tid will hold Xlock until commit or abort, so if a page is dirtied
+            // by the tid, it won't be dirtied by others
+            if (commit) {
+                // if commit, flush dirty page of this tid into disk
+                try {
+                    if (page.isDirty() == tid) {
+                        flushPage(page.getId());
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            } else {
+                // if abort, recover this pages in memory from disk (store original data before
+                // this transaction)
+                if (page.isDirty() == tid) {
+                    HeapFile dbfile = (HeapFile) Database.getCatalog().getDatabaseFile(page.getId().getTableId());
+                    Page pageFromDisk = dbfile.readPage(page.getId());
+                    pagesInBuffer.put(pageFromDisk.getId(), pageFromDisk);
+                }
+            }
+
+            // realse the lock that tid holds on this page
+            lockManager.releaseLock(tid, page.getId());
+        }
     }
 
     /**
@@ -163,7 +383,7 @@ public class BufferPool {
         ArrayList<Page> pagesModified = (ArrayList<Page>) f.insertTuple(tid, t);
         for (Page page : pagesModified) {
             page.markDirty(true, tid);
-            pagesInBuffer.put(page.getId().hashCode(), page);
+            pagesInBuffer.put(page.getId(), page);
         }
     }
 
@@ -215,7 +435,7 @@ public class BufferPool {
     public synchronized void discardPage(PageId pid) {
         // some code goes here
         // not necessary for lab1
-        pagesInBuffer.remove(pid.hashCode());
+        pagesInBuffer.remove(pid);
     }
 
     /**
@@ -226,10 +446,10 @@ public class BufferPool {
     private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
-        Page page = pagesInBuffer.get(pid.hashCode());
+        Page page = pagesInBuffer.get(pid);
         DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
         f.writePage(page);
-        pagesInBuffer.remove(page.getId().hashCode());
+        pagesInBuffer.remove(page.getId());
     }
 
     /**
@@ -247,14 +467,30 @@ public class BufferPool {
     private synchronized void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
+        long lru = Long.MAX_VALUE;
+        Page lruPage = null;
         for (Page page : pagesInBuffer.values()) {
-            try {
-                flushPage(page.getId());
-                return;
-            } catch (IOException e) {
-                e.printStackTrace();
+            // don't evict dirty pages into disk...
+            // bcz dirty page can only be flush into disk by commit
+            // otherwise, abort can not recover original pages from disk
+            if (page.isDirty() != null)
+                continue;
+
+            // found the least recent used (clean) page
+            long timestamp = ((HeapPage) page).getTimestamp();
+            if (timestamp < lru) {
+                lruPage = page;
+                lru = timestamp;
             }
         }
+
+        // just remove in bufferpool bcz its clean
+        if (lruPage != null) {
+            pagesInBuffer.remove(lruPage.getId());
+            return;
+        }
+
+        throw new DbException("All pages in the BufferPool are dirty, can not evict any page");
     }
 
 }

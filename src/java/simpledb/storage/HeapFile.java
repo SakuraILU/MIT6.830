@@ -2,6 +2,7 @@ package simpledb.storage;
 
 import simpledb.common.Database;
 import simpledb.common.DbException;
+import simpledb.common.Permissions;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
@@ -143,13 +144,20 @@ public class HeapFile implements DbFile {
         ArrayList<Page> pageArray = new ArrayList<Page>();
 
         for (int pgNo = 0; pgNo < numPages(); ++pgNo) {
-            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pgNo), null);
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), pgNo),
+                    Permissions.READ_WRITE);
             if (page.getNumEmptySlots() > 0) {
                 page.insertTuple(t);
                 page.markDirty(true, tid);
                 pageArray.add(page);
                 return pageArray;
             }
+            // Important Note: We must release the lock on the page, bcz we actually don't
+            // use it, no read/write data at all...
+            // otherwise we scan many pages here to find a page with empty slot, if we don't
+            // release their locks, many other transactions will be blocked...cuase some
+            // situations very hard to understand
+            Database.getBufferPool().unsafeReleasePage(tid, page.getId());
         }
 
         // all pages in the file is full, append a new empty page in the file
@@ -176,7 +184,8 @@ public class HeapFile implements DbFile {
             TransactionAbortedException {
         // some code goes here
         ArrayList<Page> pageArray = new ArrayList<Page>();
-        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, t.recordId.getPageId(), null);
+        HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, t.recordId.getPageId(),
+                Permissions.READ_WRITE);
         page.deleteTuple(t);
         pageArray.add(page);
         return pageArray;
@@ -199,7 +208,8 @@ public class HeapFile implements DbFile {
         @Override
         public void open() throws DbException, TransactionAbortedException {
             nextPgNo = 0;
-            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), nextPgNo++), null);
+            HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), nextPgNo++),
+                    Permissions.READ_ONLY);
             tupleItr = page.iterator();
         }
 
@@ -216,7 +226,7 @@ public class HeapFile implements DbFile {
                 if (nextPgNo >= numPages())
                     return false;
                 HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(getId(), nextPgNo++),
-                        null); // should iterate the next page
+                        Permissions.READ_ONLY); // should iterate the next page
                 tupleItr = page.iterator();
             }
             return true;
