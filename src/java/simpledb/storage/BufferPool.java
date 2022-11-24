@@ -93,10 +93,8 @@ public class BufferPool {
                         if (lock.type == type || lock.type == LockType.Exclusive)
                             return true;
                         // need Exclusive lock but has a shared lock, if this pid only has this shared
-                        // lock,
-                        // no other tid is try to read or write, we can upgrade this shared->exlucisve,
-                        // bcz we
-                        // don't effect any one...
+                        // lock, no other tid is try to read or write, we can upgrade this
+                        // shared->exlucisve, bcz we don't effect any one...
                         else if (locks.size() == 1) {
                             locks.get(0).type = LockType.Exclusive;
                             return true;
@@ -171,8 +169,8 @@ public class BufferPool {
 
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
-    private static final long TIMEOUT = 3000;
-    private static final int TIMEOUTOFFSET = 1500;
+    private static final long TIMEOUT = 2000;
+    private static final int TIMEOUTOFFSET = 1000;
 
     private static int pageSize = DEFAULT_PAGE_SIZE;
 
@@ -186,6 +184,7 @@ public class BufferPool {
     private int numPages;
     // HashMap: pageId --> Page
     private ConcurrentHashMap<PageId, Page> pagesInBuffer;
+    private ConcurrentHashMap<PageId, Long> pagesAge;
     private LockManager lockManager;
 
     /**
@@ -197,6 +196,7 @@ public class BufferPool {
         // some code goes here
         this.numPages = numPages;
         this.pagesInBuffer = new ConcurrentHashMap<PageId, Page>();
+        this.pagesAge = new ConcurrentHashMap<PageId, Long>();
         this.lockManager = new LockManager();
     }
 
@@ -286,6 +286,8 @@ public class BufferPool {
             Page pageFromDisk = file.readPage(pid);
             pagesInBuffer.put(pid, pageFromDisk);
         }
+
+        pagesAge.put(pid, System.currentTimeMillis());
         return pagesInBuffer.get(pid);
     }
 
@@ -352,6 +354,7 @@ public class BufferPool {
                     HeapFile dbfile = (HeapFile) Database.getCatalog().getDatabaseFile(page.getId().getTableId());
                     Page pageFromDisk = dbfile.readPage(page.getId());
                     pagesInBuffer.put(pageFromDisk.getId(), pageFromDisk);
+                    pagesAge.put(pageFromDisk.getId(), System.currentTimeMillis());
                 }
             }
 
@@ -436,6 +439,7 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1
         pagesInBuffer.remove(pid);
+        pagesAge.remove(pid);
     }
 
     /**
@@ -450,6 +454,7 @@ public class BufferPool {
         DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
         f.writePage(page);
         pagesInBuffer.remove(page.getId());
+        pagesAge.remove(page.getId());
     }
 
     /**
@@ -477,7 +482,7 @@ public class BufferPool {
                 continue;
 
             // found the least recent used (clean) page
-            long timestamp = ((HeapPage) page).getTimestamp();
+            long timestamp = pagesAge.get(page.getId());
             if (timestamp < lru) {
                 lruPage = page;
                 lru = timestamp;

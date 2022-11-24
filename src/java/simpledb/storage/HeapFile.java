@@ -222,6 +222,9 @@ public class HeapFile implements DbFile {
             // the current page has been iterated over
             // hasNext() method detemine whether has next tuple, so here must
             // has next page if current page is iterated over when next() is called
+
+            // possibly, a whole page is empty, so here need loops to find next page with
+            // tuples
             while (!tupleItr.hasNext()) {
                 if (nextPgNo >= numPages())
                     return false;

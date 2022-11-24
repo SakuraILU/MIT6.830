@@ -1,0 +1,50 @@
+Buildfile: /home/sakura/Code/Progject/simple-db-hw-2021/build.xml
+
+compile:
+    [javac] Compiling 1 source file to /home/sakura/Code/Progject/simple-db-hw-2021/bin/src
+    [javac] warning: [options] bootstrap class path not set in conjunction with -source 8
+    [javac] 1 warning
+
+testcompile:
+
+runsystest:
+    [junit] Running simpledb.systemtest.BTreeFileInsertTest
+    [junit] Testsuite: simpledb.systemtest.BTreeFileInsertTest
+    [junit] Tests run: 5, Failures: 0, Errors: 2, Skipped: 0, Time elapsed: 0.637 sec
+    [junit] Tests run: 5, Failures: 0, Errors: 2, Skipped: 0, Time elapsed: 0.637 sec
+    [junit] 
+    [junit] Testcase: testSplitLeafPage took 0.027 sec
+    [junit] Testcase: addTuple took 0.035 sec
+    [junit] Testcase: testSplitInternalPage took 0.104 sec
+    [junit] 	Caused an ERROR
+    [junit] tried to delete entry on invalid page or table
+    [junit] simpledb.common.DbException: tried to delete entry on invalid page or table
+    [junit] 	at simpledb.index.BTreeInternalPage.deleteEntry(BTreeInternalPage.java:370)
+    [junit] 	at simpledb.index.BTreeInternalPage.deleteKeyAndRightChild(BTreeInternalPage.java:401)
+    [junit] 	at simpledb.index.BTreeFile.splitInternalPage(BTreeFile.java:375)
+    [junit] 	at simpledb.index.BTreeFile.getParentWithEmptySlots(BTreeFile.java:440)
+    [junit] 	at simpledb.index.BTreeFile.splitLeafPage(BTreeFile.java:307)
+    [junit] 	at simpledb.index.BTreeFile.insertTuple(BTreeFile.java:568)
+    [junit] 	at simpledb.storage.BufferPool.insertTuple(BufferPool.java:388)
+    [junit] 	at simpledb.systemtest.BTreeFileInsertTest.testSplitInternalPage(BTreeFileInsertTest.java:254)
+    [junit] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    [junit] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+    [junit] 	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+    [junit] 
+    [junit] Testcase: addDuplicateTuples took 0.053 sec
+    [junit] Testcase: testSplitRootPage took 0.412 sec
+    [junit] 	Caused an ERROR
+    [junit] tried to delete entry on invalid page or table
+    [junit] simpledb.common.DbException: tried to delete entry on invalid page or table
+    [junit] 	at simpledb.index.BTreeInternalPage.deleteEntry(BTreeInternalPage.java:370)
+    [junit] 	at simpledb.index.BTreeInternalPage.deleteKeyAndRightChild(BTreeInternalPage.java:401)
+    [junit] 	at simpledb.index.BTreeFile.splitInternalPage(BTreeFile.java:375)
+    [junit] 	at simpledb.index.BTreeFile.getParentWithEmptySlots(BTreeFile.java:440)
+    [junit] 	at simpledb.index.BTreeFile.splitLeafPage(BTreeFile.java:307)
+    [junit] 	at simpledb.index.BTreeFile.insertTuple(BTreeFile.java:568)
+    [junit] 	at simpledb.storage.BufferPool.insertTuple(BufferPool.java:388)
+    [junit] 	at simpledb.systemtest.BTreeFileInsertTest.testSplitRootPage(BTreeFileInsertTest.java:187)
+    [junit] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    [junit] 	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+    [junit] 	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+    [junit] 
