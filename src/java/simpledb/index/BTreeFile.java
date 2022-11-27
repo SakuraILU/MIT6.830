@@ -203,6 +203,7 @@ public class BTreeFile implements DbFile {
 		assert pid.pgcateg() == BTreePageId.INTERNAL : "Not a Internal node";
 
 		BTreeInternalPage page = (BTreeInternalPage) getPage(tid, dirtypages, pid, perm);
+		assert page != null : String.format("page %s is not found", pid.toString());
 		Iterator<BTreeEntry> itr = page.iterator();
 		BTreeEntry entry = null;
 		while (itr.hasNext()) {
@@ -281,6 +282,7 @@ public class BTreeFile implements DbFile {
 		// the sibling pointers of all the affected leaf pages. Return the page into
 		// which a
 		// tuple with the given key field should be inserted.
+		assert page.getId().pgcateg() == BTreePageId.LEAF : "Not a leaf page";
 
 		BTreeLeafPage rightPage = (BTreeLeafPage) getEmptyPage(tid, dirtypages, BTreePageId.LEAF);
 
@@ -369,6 +371,8 @@ public class BTreeFile implements DbFile {
 		// will be useful here. Return the page into which an entry with the given key
 		// field
 		// should be inserted.
+		assert page.getId().pgcateg() == BTreePageId.INTERNAL : "Not a internal page";
+
 		BTreeInternalPage rightPage = (BTreeInternalPage) getEmptyPage(tid, dirtypages, BTreePageId.INTERNAL);
 		Iterator<BTreeEntry> itr = page.reverseIterator();
 		int numEntry = page.getNumEntries();
@@ -844,9 +848,13 @@ public class BTreeFile implements DbFile {
 			page.insertEntry(entry);
 			if (itr.hasNext()) {
 				entry = itr.next();
-			} else
+			} else {
+				entry = null;
 				break;
+			}
 		}
+
+		assert entry != null : "Entry is null when steal from left internal page";
 
 		parentEntry.setKey(entry.getKey());
 		parent.updateEntry(parentEntry);
@@ -901,8 +909,13 @@ public class BTreeFile implements DbFile {
 			page.insertEntry(entry);
 			if (itr.hasNext()) {
 				entry = itr.next();
+			} else {
+				entry = null;
+				break;
 			}
 		}
+
+		assert entry != null : "Entry is null when steal from left internal page";
 
 		parentEntry.setKey(entry.getKey());
 		parent.updateEntry(parentEntry);

@@ -186,6 +186,7 @@ public class BTreeTest extends SimpleDbTestBase {
 			while(it.hasNext()) {
 				Tuple t = it.next();
 				if(tuple.equals(SystemTestUtil.tupleToList(t))) {
+					System.out.println("found one");
 					found = true;
 					break;
 				}
@@ -194,6 +195,7 @@ public class BTreeTest extends SimpleDbTestBase {
 			it.close();
 		}
 		
+		System.out.println("here");
 		// now make sure all the tuples are in order and we have the right number
 		System.out.println("Performing sanity checks...");
     	DbFileIterator it = bf.iterator(tid);

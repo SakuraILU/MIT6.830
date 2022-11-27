@@ -346,6 +346,7 @@ public class LogTest extends SimpleDbTestBase {
         t.commit();
     }
 
+
     @Test public void TestOpenCommitOpenCrash()
             throws IOException, DbException, TransactionAbortedException {
         setup();

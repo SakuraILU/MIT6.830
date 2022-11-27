@@ -62,105 +62,101 @@ public class BufferPool {
             locksMap = new ConcurrentHashMap<PageId, Vector<Lock>>();
         }
 
-        public boolean acquireLock(TransactionId tid, PageId pid, LockType type) {
+        public synchronized boolean acquireLock(TransactionId tid, PageId pid, LockType type) {
             // if this pid has no locks, create one according to type
-            //
-            // Thread-safe: two threads may enter this if statement (locksmap only protect
-            // thread-safe inside itself). they may add locks for the same pid one by one
-            // through locksMap.put(), thus one locks will be override and makes the lock
-            // inside vanished...
-            // so, we need to lock the pid, makes only one thread can add locks for one pid
-            synchronized (pid) {
-                if (!locksMap.containsKey(pid)) {
-                    Vector<Lock> locks = new Vector<Lock>();
-                    locks.add(new Lock(tid, type));
-                    locksMap.put(pid, locks);
-                    return true;
-                }
+            if (!locksMap.containsKey(pid)) {
+                Vector<Lock> locks = new Vector<Lock>();
+                locks.add(new Lock(tid, type));
+                locksMap.put(pid, locks);
+                return true;
             }
 
             Vector<Lock> locks = locksMap.get(pid);
-            // thread-safe: we need to add lock in locks(Vector, add and remove need to
-            // operate multi lock at the same time, so need to protect locks) and also read
-            // its property locks.size(), concurrency for the same locks is prohibited
-            synchronized (locks) {
-                // if tid already has a lock
-                for (Lock lock : locks) {
-                    if (lock.tid == tid)
-                        // 1. exactly same
-                        // 2. need Shared lock but has exclusive lock, exclusive lock supports read, so
-                        // just return true to say: ok, you can write
-                        if (lock.type == type || lock.type == LockType.Exclusive)
-                            return true;
-                        // need Exclusive lock but has a shared lock, if this pid only has this shared
-                        // lock, no other tid is try to read or write, we can upgrade this
-                        // shared->exlucisve, bcz we don't effect any one...
-                        else if (locks.size() == 1) {
-                            locks.get(0).type = LockType.Exclusive;
-                            return true;
-                        }
-                }
-
-                // this tid don't has a lock
-
-                if (type.equals(LockType.Exclusive)) {
-                    // on other tid is read or write, we can write
-                    if (locks.size() == 0) {
-                        locks.add(new Lock(tid, type));
-                    } else
-                        return false;
-                } else if (type.equals(LockType.SHARED)) {
-                    // on other tid is try to write, we can read
-                    for (Lock lock : locks) {
-                        if (lock.type == LockType.Exclusive)
-                            return false;
+            // if tid already has a lock
+            // Important bug, if we want to modify some data in sets, use
+            // for(int...){set.add/remove} or ListIterator.... while(itr.hasnext()){element
+            // = itr.next(); itr.remove/ itr.add}
+            // for(element: set){set.add/remove} will cause ConcurrentModification trouble
+            for (int i = 0; i < locks.size(); ++i) {
+                Lock lock = locks.get(i);
+                if (lock.tid.equals(tid))
+                    // 1. exactly same
+                    // 2. need Shared lock but has exclusive lock, exclusive lock supports read, so
+                    // just return true to say: ok, you can write
+                    if (lock.type == type || lock.type == LockType.Exclusive)
+                        return true;
+                    // need Exclusive lock but has a shared lock, if this pid only has this shared
+                    // lock, no other tid is try to read or write, we can upgrade this
+                    // shared->exlucisve, bcz we don't effect any one...
+                    else if (locks.size() == 1) {
+                        locks.get(0).type = LockType.Exclusive;
+                        return true;
                     }
+            }
+            // this tid don't has a lock
+
+            if (type.equals(LockType.Exclusive)) {
+                // on other tid is read or write, we can write
+                if (locks.size() == 0) {
                     locks.add(new Lock(tid, type));
+                } else
+                    return false;
+            } else if (type.equals(LockType.SHARED)) {
+                // on other tid is try to write, we can read
+                for (int i = 0; i < locks.size(); ++i) {
+                    Lock lock = locks.get(i);
+                    if (lock.type == LockType.Exclusive)
+                        return false;
                 }
+                locks.add(new Lock(tid, type));
             }
             return true;
         }
 
         // tid releases the lock on this page
-        public boolean releaseLock(TransactionId tid, PageId pid) {
+        public synchronized boolean releaseLock(TransactionId tid, PageId pid) {
             if (!locksMap.containsKey(pid))
                 return true;
 
             Vector<Lock> locks = locksMap.get(pid);
-            // thread-safe: we need to remove lock in locks (add and remove need to operate
-            // multi lock at the same time, so need to protect locks) and read lock
-            // property lock.tid (protect lock or even locks more aggresively)
-            // so concurrency for the same locks is prohibited
-            // note: locksMap.remove() is ok, bcz it's ConcurrentHashMap
-            synchronized (locks) {
+            if (locks == null)
+                return true;
 
-                // one tid only has one lock at most according to LockManaer.acquireLock(), so
-                // if found one lock of this tid, just remove it and return
-                for (Lock lock : locks) {
-                    if (lock.tid == tid) {
-                        locks.remove(lock);
+            // one tid only has one lock at most according to LockManaer.acquireLock(), so
+            // if found one lock of this tid, just remove it and return
+            for (int i = 0; i < locks.size(); ++i) {
+                Lock lock = locks.get(i);
+                if (lock.tid.equals(tid)) {
+                    // System.out.println("realse a lock for tid " + tid.getId());
+                    locks.remove(lock);
 
-                        // if locks of this pid is empty, remove locks Vector for save resources
-                        if (locks.size() == 0)
-                            locksMap.remove(pid);
+                    // if locks of this pid is empty, remove locks Vector for save resources
+                    if (locks.size() == 0)
+                        locksMap.remove(pid);
 
-                        return true;
-                    }
+                    return true;
                 }
             }
             return false;
         }
 
+        // realse all locks of a transaction
+        public synchronized boolean releaseAllLocks(TransactionId tid) {
+            for (PageId pid : locksMap.keySet()) {
+                releaseLock(tid, pid);
+            }
+            return true;
+        }
+
         // if tid holds a lock on this page
-        public boolean holdsLock(TransactionId tid, PageId pid) {
+        public synchronized boolean holdsLock(TransactionId tid, PageId pid) {
             Vector<Lock> locks = locksMap.get(pid);
-            // thread-safe: we need to read lock property lock.tid
+            if (locks == null)
+                return false;
             // so concurrency for the same lock is prohibited
             for (Lock lock : locks) {
-                synchronized (lock) {
-                    if (lock.tid == tid) {
-                        return true;
-                    }
+                if (lock.tid.equals(tid)) {
+                    return true;
                 }
             }
             return false;
@@ -263,14 +259,16 @@ public class BufferPool {
         // buy some stock :)
         long startTime = System.currentTimeMillis();
         long timeout = TIMEOUT + new Random().nextInt(TIMEOUTOFFSET);
+        // System.out.println("try to get page " + pid.getPageNumber());
         while (!lockManager.acquireLock(tid, pid, type)) {
+            // System.out.println("try to get lock...");
             if (System.currentTimeMillis() - startTime > timeout)
                 throw new TransactionAbortedException();
 
             // do 200ms sleep to avoid overcrowding when many transactions applying for
             // locks at the same time and to save CPU resources
             try {
-                Thread.sleep(200);
+                Thread.sleep(100);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -284,6 +282,7 @@ public class BufferPool {
             // found this Dbfile in Catlog according to pid.tableId
             DbFile file = Database.getCatalog().getDatabaseFile(pid.getTableId());
             Page pageFromDisk = file.readPage(pid);
+            assert pid == pageFromDisk.getId() : "pid is not equal in getPage";
             pagesInBuffer.put(pid, pageFromDisk);
         }
 
@@ -335,32 +334,36 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        // System.out.println("traverse page");
         for (Page page : pagesInBuffer.values()) {
-            // note: this tid will hold Xlock until commit or abort, so if a page is dirtied
-            // by the tid, it won't be dirtied by others
+            // A very IMPORTANT bug: in Steal mode, dirty pages may be evicted into disk and
+            // become "clean" during a transcation...so we need to setBeforeImage of them
+            // when commit and recover them when abort. A easy way is that setBeforeImage or
+            // recover all pages related to this tid....
             if (commit) {
                 // if commit, flush dirty page of this tid into disk
                 try {
+                    // if dirty, means their change is not flush into disk
                     if (page.isDirty() == tid) {
                         flushPage(page.getId());
                     }
+                    // use current page contents as the before-image
+                    // for the usage of the next transaction that modifies this page.
+                    page.setBeforeImage(); // for all pages related to this tid, not only pages with dirty mark
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
             } else {
-                // if abort, recover this pages in memory from disk (store original data before
-                // this transaction)
-                if (page.isDirty() == tid) {
-                    HeapFile dbfile = (HeapFile) Database.getCatalog().getDatabaseFile(page.getId().getTableId());
-                    Page pageFromDisk = dbfile.readPage(page.getId());
-                    pagesInBuffer.put(pageFromDisk.getId(), pageFromDisk);
-                    pagesAge.put(pageFromDisk.getId(), System.currentTimeMillis());
-                }
+                // recover all pages related to this tid, not only pages with diry mark
+                DbFile dbfile = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
+                Page pageFromDisk = dbfile.readPage(page.getId());
+                pagesInBuffer.put(pageFromDisk.getId(), pageFromDisk);
+                pagesAge.put(pageFromDisk.getId(), System.currentTimeMillis());
             }
 
             // realse the lock that tid holds on this page
-            lockManager.releaseLock(tid, page.getId());
         }
+        lockManager.releaseAllLocks(tid);
     }
 
     /**
@@ -386,7 +389,11 @@ public class BufferPool {
         ArrayList<Page> pagesModified = (ArrayList<Page>) f.insertTuple(tid, t);
         for (Page page : pagesModified) {
             page.markDirty(true, tid);
+            // BTree has its local cache...so f.deleteTuple may not always use
+            // BufferPool.getPage() like HeapFile, so we need to update them in
+            // bufferpool's cache here
             pagesInBuffer.put(page.getId(), page);
+            pagesAge.put(page.getId(), System.currentTimeMillis());
         }
     }
 
@@ -409,8 +416,14 @@ public class BufferPool {
         // not necessary for lab1
         DbFile f = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
         ArrayList<Page> pagesModified = (ArrayList<Page>) f.deleteTuple(tid, t);
-        for (Page page : pagesModified)
+        for (Page page : pagesModified) {
             page.markDirty(true, tid);
+            // BTree has its local cache...so f.deleteTuple may not always use
+            // BufferPool.getPage() like HeapFile, so we need to update them in
+            // bufferpool's cache here
+            pagesInBuffer.put(page.getId(), page);
+            pagesAge.put(page.getId(), System.currentTimeMillis());
+        }
     }
 
     /**
@@ -421,9 +434,9 @@ public class BufferPool {
     public synchronized void flushAllPages() throws IOException {
         // some code goes here
         // not necessary for lab1
-        // for (Page page : pagesInBuffer.values()) {
-        // flushPage(page.getId());
-        // }
+        for (Page page : pagesInBuffer.values()) {
+            flushPage(page.getId());
+        }
     }
 
     /**
@@ -450,11 +463,22 @@ public class BufferPool {
     private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
+
+        // append an update record to the log, with
+        // a before-image and after-image.
         Page page = pagesInBuffer.get(pid);
-        DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
-        f.writePage(page);
-        pagesInBuffer.remove(page.getId());
-        pagesAge.remove(page.getId());
+        assert page != null : "flush a null page";
+
+        TransactionId dirtier = page.isDirty();
+        if (dirtier != null) {
+            // make sure record log first and then flush into disk
+            Database.getLogFile().logWrite(dirtier, page.getBeforeImage(), page);
+            Database.getLogFile().force(); // force() tell file system that write all pages of logfile into disk
+                                           // immediately, don't cache page in the bufferpool of file system
+            DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
+            f.writePage(page);
+            page.markDirty(false, null); // mark clean
+        }
     }
 
     /**
@@ -463,6 +487,11 @@ public class BufferPool {
     public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
+        for (Page page : pagesInBuffer.values()) {
+            if (page.isDirty() == tid) {
+                flushPage(page.getId());
+            }
+        }
     }
 
     /**
@@ -475,13 +504,7 @@ public class BufferPool {
         long lru = Long.MAX_VALUE;
         Page lruPage = null;
         for (Page page : pagesInBuffer.values()) {
-            // don't evict dirty pages into disk...
-            // bcz dirty page can only be flush into disk by commit
-            // otherwise, abort can not recover original pages from disk
-            if (page.isDirty() != null)
-                continue;
-
-            // found the least recent used (clean) page
+            // found the least recent used page
             long timestamp = pagesAge.get(page.getId());
             if (timestamp < lru) {
                 lruPage = page;
@@ -489,9 +512,16 @@ public class BufferPool {
             }
         }
 
-        // just remove in bufferpool bcz its clean
         if (lruPage != null) {
-            pagesInBuffer.remove(lruPage.getId());
+            try {
+                // if dirty, flush into disk
+                if (lruPage.isDirty() != null)
+                    flushPage(lruPage.getId());
+                // evict page from bufferpool
+                discardPage(lruPage.getId());
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
             return;
         }
 

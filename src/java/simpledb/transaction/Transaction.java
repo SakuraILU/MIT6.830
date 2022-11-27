@@ -38,6 +38,7 @@ public class Transaction {
 
     /** Finish the transaction */
     public void abort() throws IOException {
+        System.out.println("start abort");
         transactionComplete(true);
     }
 
@@ -45,20 +46,20 @@ public class Transaction {
     public void transactionComplete(boolean abort) throws IOException {
 
         if (started) {
-            //write abort log record and rollback transaction
+            // write abort log record and rollback transaction
             if (abort) {
-                Database.getLogFile().logAbort(tid); //does rollback too
-            } 
+                Database.getLogFile().logAbort(tid); // does rollback too
+            }
 
             // Release locks and flush pages if needed
             Database.getBufferPool().transactionComplete(tid, !abort); // release locks
 
             // write commit log record
             if (!abort) {
-            	Database.getLogFile().logCommit(tid);
+                Database.getLogFile().logCommit(tid);
             }
 
-            //setting this here means we could possibly write multiple abort records -- OK?
+            // setting this here means we could possibly write multiple abort records -- OK?
             started = false;
         }
     }
