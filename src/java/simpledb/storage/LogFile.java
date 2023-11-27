@@ -495,19 +495,26 @@ public class LogFile {
                         int cpType = raf.readInt();
                         long cpTid = raf.readLong();
 
-                        // if this record is not by tid, jump...
-                        if (cpTid != tid.getId())
-                            continue;
+                        // [BUG]: if this record is not by tid, jump over it
+                        // A important bug:
+                        // don't just continue,
+                        // should read out the record correctly according to the type
+                        // if not the tid, just ignore it...
+                        // otherwise, latter reading maybe wrong if we don;t read the record out
 
                         switch (cpType) {
                             case UPDATE_RECORD:
                                 Page before = readPageData(raf);
+                                readPageData(raf);
+
+                                if (cpTid != tid.getId())
+                                    break;
+
                                 if (pageRecoveried.contains(before.getId()))
                                     break;
                                 else
                                     pageRecoveried.add(before.getId());
 
-                                readPageData(raf);
                                 // recover before image
                                 DbFile f = Database.getCatalog().getDatabaseFile(before.getId().getTableId());
                                 f.writePage(before);

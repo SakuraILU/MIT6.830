@@ -9,7 +9,6 @@ import simpledb.transaction.TransactionId;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Random;
-import java.util.Vector;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -28,137 +27,118 @@ public class BufferPool {
         SHARED, Exclusive
     };
 
-    private class LockManager {
-        private class Lock {
-            public TransactionId tid; // which transcation holds this lock
-            public LockType type; // SHARED or EXCLUSIVE lock
+    private ConcurrentHashMap<PageId, ConcurrentHashMap<TransactionId, LockType>> locksMap;
 
-            Lock(TransactionId tid, LockType type) {
-                this.tid = tid;
-                this.type = type;
-            }
+    public boolean acquireLock(TransactionId tid, PageId pid, LockType type) {
+        synchronized (locksMap) {
 
-            @Override
-            public boolean equals(Object obj) {
-                if (!this.getClass().isInstance(obj)) {
-                    return false;
-                }
-                Lock other = (Lock) obj;
-
-                return (this.tid == other.tid) && (this.type == other.type);
-            }
-
-            @Override
-            public String toString() {
-                return tid.toString() + "(" + type.toString() + ")  ";
-            }
-        }
-
-        private ConcurrentHashMap<PageId, Vector<Lock>> locksMap; // lab4 introduces multi-thread, so ConcurrentHashMap
-                                                                  // would be a better choice, bcz we don't need to lock
-                                                                  // the whole locksMap for modification
-
-        LockManager() {
-            locksMap = new ConcurrentHashMap<PageId, Vector<Lock>>();
-        }
-
-        public synchronized boolean acquireLock(TransactionId tid, PageId pid, LockType type) {
             // if this pid has no locks, create one according to type
             if (!locksMap.containsKey(pid)) {
-                Vector<Lock> locks = new Vector<Lock>();
-                locks.add(new Lock(tid, type));
+                ConcurrentHashMap<TransactionId, LockType> locks = new ConcurrentHashMap<TransactionId, LockType>();
+                locks.put(tid, type);
                 locksMap.put(pid, locks);
                 return true;
             }
 
-            Vector<Lock> locks = locksMap.get(pid);
+            ConcurrentHashMap<TransactionId, LockType> locks = locksMap.get(pid);
             // if tid already has a lock
             // Important bug, if we want to modify some data in sets, use
             // for(int...){set.add/remove} or ListIterator.... while(itr.hasnext()){element
             // = itr.next(); itr.remove/ itr.add}
             // for(element: set){set.add/remove} will cause ConcurrentModification trouble
-            for (int i = 0; i < locks.size(); ++i) {
-                Lock lock = locks.get(i);
-                if (lock.tid.equals(tid))
-                    // 1. exactly same
-                    // 2. need Shared lock but has exclusive lock, exclusive lock supports read, so
-                    // just return true to say: ok, you can write
-                    if (lock.type == type || lock.type == LockType.Exclusive)
+            LockType lktype = locks.get(tid);
+            if (lktype != null) {
+                // if relock the same lock, return true
+                if (type == lktype) {
+                    return true;
+                    // if different, just want a SHARED lock, but already has a EXCLUSIVE lock
+                } else if (type == LockType.SHARED) {
+                    return true;
+                    // if different, want a EXCLUSIVE lock, but already has a SHARED lock
+                } else if (type == LockType.Exclusive) {
+                    // check whether only this tid has a lock on this page
+                    if (locks.size() == 1) {
+                        locks.put(tid, type); // upgrade to EXCLUSIVE lock
                         return true;
-                    // need Exclusive lock but has a shared lock, if this pid only has this shared
-                    // lock, no other tid is try to read or write, we can upgrade this
-                    // shared->exlucisve, bcz we don't effect any one...
-                    else if (locks.size() == 1) {
-                        locks.get(0).type = LockType.Exclusive;
-                        return true;
+                    } else {
+                        return false;
                     }
+                }
             }
             // this tid don't has a lock
-
-            if (type.equals(LockType.Exclusive)) {
-                // on other tid is read or write, we can write
-                if (locks.size() == 0) {
-                    locks.add(new Lock(tid, type));
-                } else
-                    return false;
-            } else if (type.equals(LockType.SHARED)) {
-                // on other tid is try to write, we can read
-                for (int i = 0; i < locks.size(); ++i) {
-                    Lock lock = locks.get(i);
-                    if (lock.type == LockType.Exclusive)
+            else {
+                if (type == LockType.SHARED) {
+                    for (TransactionId id : locks.keySet()) {
+                        if (locks.get(id) == LockType.Exclusive)
+                            return false;
+                    }
+                    locks.put(tid, type);
+                    return true;
+                } else {
+                    if (locks.size() == 0) {
+                        locks.put(tid, type);
+                        return true;
+                    } else {
                         return false;
+                    }
                 }
-                locks.add(new Lock(tid, type));
             }
-            return true;
-        }
 
-        // tid releases the lock on this page
-        public synchronized boolean releaseLock(TransactionId tid, PageId pid) {
+            return true;
+
+        }
+    }
+
+    // tid releases the lock on this page
+    public boolean releaseLock(TransactionId tid, PageId pid) {
+        synchronized (locksMap) {
+
             if (!locksMap.containsKey(pid))
                 return true;
 
-            Vector<Lock> locks = locksMap.get(pid);
+            ConcurrentHashMap<TransactionId, LockType> locks = locksMap.get(pid);
             if (locks == null)
                 return true;
 
             // one tid only has one lock at most according to LockManaer.acquireLock(), so
             // if found one lock of this tid, just remove it and return
-            for (int i = 0; i < locks.size(); ++i) {
-                Lock lock = locks.get(i);
-                if (lock.tid.equals(tid)) {
-                    // System.out.println("realse a lock for tid " + tid.getId());
-                    locks.remove(lock);
-
-                    // if locks of this pid is empty, remove locks Vector for save resources
-                    if (locks.size() == 0)
-                        locksMap.remove(pid);
-
-                    return true;
-                }
+            LockType lktype = locks.get(tid);
+            if (lktype != null) {
+                locks.remove(tid);
+                // if locks of this pid is empty, remove locks Vector for save resources
+                if (locks.size() == 0)
+                    locksMap.remove(pid);
+                return true;
             }
+
             return false;
         }
+    }
 
-        // realse all locks of a transaction
-        public synchronized boolean releaseAllLocks(TransactionId tid) {
+    // realse all locks of a transaction
+    public synchronized boolean releaseAllLocks(TransactionId tid) {
+        synchronized (locksMap) {
             for (PageId pid : locksMap.keySet()) {
                 releaseLock(tid, pid);
             }
             return true;
         }
 
-        // if tid holds a lock on this page
-        public synchronized boolean holdsLock(TransactionId tid, PageId pid) {
-            Vector<Lock> locks = locksMap.get(pid);
+    }
+
+    /** Return true if the specified transaction has a lock on the specified page */
+    public boolean holdsLock(TransactionId tid, PageId pid) {
+        // some code goes here
+        // not necessary for lab1|lab2
+        synchronized (locksMap) {
+            ConcurrentHashMap<TransactionId, LockType> locks = locksMap.get(pid);
             if (locks == null)
                 return false;
-            // so concurrency for the same lock is prohibited
-            for (Lock lock : locks) {
-                if (lock.tid.equals(tid)) {
-                    return true;
-                }
-            }
+
+            LockType lktype = locks.get(tid);
+            if (lktype != null)
+                return true;
+
             return false;
         }
     }
@@ -181,7 +161,6 @@ public class BufferPool {
     // HashMap: pageId --> Page
     private ConcurrentHashMap<PageId, Page> pagesInBuffer;
     private ConcurrentHashMap<PageId, Long> pagesAge;
-    private LockManager lockManager;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -193,7 +172,7 @@ public class BufferPool {
         this.numPages = numPages;
         this.pagesInBuffer = new ConcurrentHashMap<PageId, Page>();
         this.pagesAge = new ConcurrentHashMap<PageId, Long>();
-        this.lockManager = new LockManager();
+        this.locksMap = new ConcurrentHashMap<PageId, ConcurrentHashMap<TransactionId, LockType>>();
     }
 
     public static int getPageSize() {
@@ -260,7 +239,7 @@ public class BufferPool {
         long startTime = System.currentTimeMillis();
         long timeout = TIMEOUT + new Random().nextInt(TIMEOUTOFFSET);
         // System.out.println("try to get page " + pid.getPageNumber());
-        while (!lockManager.acquireLock(tid, pid, type)) {
+        while (!acquireLock(tid, pid, type)) {
             // System.out.println("try to get lock...");
             if (System.currentTimeMillis() - startTime > timeout)
                 throw new TransactionAbortedException();
@@ -302,7 +281,7 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // some code goes here
         // not necessary for lab1|lab2
-        lockManager.releaseLock(tid, pid);
+        releaseLock(tid, pid);
     }
 
     /**
@@ -314,14 +293,6 @@ public class BufferPool {
         // some code goes here
         // not necessary for lab1|lab2
         transactionComplete(tid, true);
-    }
-
-    /** Return true if the specified transaction has a lock on the specified page */
-    public boolean holdsLock(TransactionId tid, PageId p) {
-        // some code goes here
-        // not necessary for lab1|lab2
-        lockManager.holdsLock(tid, p);
-        return false;
     }
 
     /**
@@ -363,7 +334,8 @@ public class BufferPool {
 
             // realse the lock that tid holds on this page
         }
-        lockManager.releaseAllLocks(tid);
+
+        releaseAllLocks(tid);
     }
 
     /**
