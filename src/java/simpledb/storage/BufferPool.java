@@ -325,16 +325,13 @@ public class BufferPool {
                     e.printStackTrace();
                 }
             } else {
-                // recover all pages related to this tid, not only pages with diry mark
-                DbFile dbfile = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
-                Page pageFromDisk = dbfile.readPage(page.getId());
-                pagesInBuffer.put(pageFromDisk.getId(), pageFromDisk);
-                pagesAge.put(pageFromDisk.getId(), System.currentTimeMillis());
+                // discard all changes made by this tid
+                discardPage(page.getId());
             }
 
-            // realse the lock that tid holds on this page
         }
 
+        // realse the lock that tid holds on this page
         releaseAllLocks(tid);
     }
 
