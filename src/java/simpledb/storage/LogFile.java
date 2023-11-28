@@ -516,8 +516,8 @@ public class LogFile {
                                     pageRecoveried.add(before.getId());
 
                                 // recover before image
-                                DbFile f = Database.getCatalog().getDatabaseFile(before.getId().getTableId());
-                                f.writePage(before);
+                                DbFile dbfile = Database.getCatalog().getDatabaseFile(before.getId().getTableId());
+                                dbfile.writePage(before);
                                 break;
 
                             case CHECKPOINT_RECORD:
@@ -575,64 +575,59 @@ public class LogFile {
 
                 currentOffset = raf.getFilePointer();
                 raf.seek(0);
-                raf.readLong();
+                long cpLoc = raf.readLong();
 
-                // first traverse, record all commited transcation's tid
-                HashSet<Long> commitTids = new HashSet<Long>();
-                while (true) {
-                    try {
-                        int cpType = raf.readInt();
-                        long cpTid = raf.readLong();
-                        switch (cpType) {
-                            // record commit tid
-                            case COMMIT_RECORD:
-                                commitTids.add(cpTid);
-                                break;
-                            case UPDATE_RECORD:
-                                readPageData(raf);
-                                readPageData(raf);
-                                break;
-                            case CHECKPOINT_RECORD:
-                                int numTransactions = raf.readInt();
-                                while (numTransactions-- > 0) {
-                                    raf.readLong();
-                                    raf.readLong();
-                                }
-                                break;
-                            default:
-                                break;
-                        }
-                        raf.readLong();
-                    } catch (EOFException e) {
-                        break;
+                // seek to the first log record
+                long minLogRecord = cpLoc;
+                if (cpLoc != -1L) {
+                    raf.seek(cpLoc);
+                    int cpType = raf.readInt();
+                    @SuppressWarnings("unused")
+                    long cpTid = raf.readLong();
+
+                    if (cpType != CHECKPOINT_RECORD) {
+                        throw new RuntimeException("Checkpoint pointer does not point to checkpoint record");
                     }
-                }
 
-                // move raf to the start, ready for the next traverse.
-                // recover before image for uncommited record and after image for commited
-                // record. A pid may has several version of modifications,
-                // for before image, recovery the first image while for after image,
-                // recovery the last one...
-                raf.seek(0);
-                raf.readLong();
-                HashMap<PageId, Page> uncommitPages = new HashMap<PageId, Page>();
-                HashMap<PageId, Page> commitPages = new HashMap<PageId, Page>();
+                    // find the mini firstLogRecord, before that, everything is recoveried correctly
+                    int numOutstanding = raf.readInt();
+                    for (int i = 0; i < numOutstanding; i++) {
+                        @SuppressWarnings("unused")
+                        long tid = raf.readLong();
+                        long firstLogRecord = raf.readLong();
+                        if (firstLogRecord < minLogRecord) {
+                            minLogRecord = firstLogRecord;
+                        }
+                    }
+                } else {
+                    minLogRecord = 0;
+                }
+                raf.seek(minLogRecord);
+
+                // record all the untracked transactions and their before images
+                // untracked transactions are those transactions that have no commit or abort
+                // record, these records are not installed correctly because of crash, they
+                // only have part logs. so we need to recover them by their before images
+                HashMap<TransactionId, HashMap<PageId, Page>> untrackedTx2BeforePages = new HashMap<TransactionId, HashMap<PageId, Page>>();
                 while (true) {
                     try {
                         int cpType = raf.readInt();
                         long cpTid = raf.readLong();
                         switch (cpType) {
+                            case BEGIN_RECORD:
+                                TransactionId tid = new TransactionId(cpTid);
+                                untrackedTx2BeforePages.put(tid, new HashMap<PageId, Page>());
+                                break;
                             case UPDATE_RECORD:
                                 // System.out.println("[ROLLBACK]: update");
                                 Page before = readPageData(raf);
-                                Page after = readPageData(raf);
-                                if (commitTids.contains(cpTid)) {
-                                    // for commit tid, record the last after image
-                                    commitPages.put(after.getId(), after);
-                                } else {
-                                    // for uncommit tid, record the first before image
-                                    if (!uncommitPages.containsKey(before.getId()))
-                                        uncommitPages.put(before.getId(), before);
+                                readPageData(raf);
+
+                                tid = new TransactionId(cpTid);
+                                HashMap<PageId, Page> Pages = untrackedTx2BeforePages.get(tid);
+                                if (!Pages.containsKey(before.getId())) {
+                                    Pages.put(before.getId(), before);
+                                    untrackedTx2BeforePages.put(tid, Pages);
                                 }
                                 break;
                             case CHECKPOINT_RECORD:
@@ -642,6 +637,10 @@ public class LogFile {
                                     raf.readLong();
                                 }
                                 break;
+                            case COMMIT_RECORD:
+                            case ABORT_RECORD:
+                                untrackedTx2BeforePages.remove(new TransactionId(cpTid));
+                                break;
                             default:
                                 break;
                         }
@@ -650,26 +649,16 @@ public class LogFile {
                         break;
                     }
                 }
+
+                for (TransactionId tid : untrackedTx2BeforePages.keySet()) {
+                    HashMap<PageId, Page> Pages = untrackedTx2BeforePages.get(tid);
+                    for (PageId pid : Pages.keySet()) {
+                        DbFile f = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                        f.writePage(Pages.get(pid));
+                    }
+                }
+
                 raf.seek(currentOffset);
-
-                // a litte tricky here...
-                // for a certain pid, if no commit tid in log, of course recory before image,
-                // but if it has commit tid, recory the after image
-                // e.g: | v0 -- v1 | v0 -- v2 | v0 -- v3 | v3 --v4 | v3 --v5 | final v3
-                // ********abort*******abort******commit****abort*****crash
-                // first check uncommit tids, should recover v0, the check commit tids, should
-                // recover v3, this is the final version should recover
-
-                for (Page page : uncommitPages.values()) {
-                    DbFile f = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
-                    f.writePage(page);
-                }
-
-                for (Page page : commitPages.values()) {
-                    DbFile f = Database.getCatalog().getDatabaseFile(page.getId().getTableId());
-                    f.writePage(page);
-                }
-
             }
         }
     }
